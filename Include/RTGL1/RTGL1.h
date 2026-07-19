@@ -39,7 +39,7 @@
     #define RGCONV
 #endif // defined(_WIN32)
 
-#define RG_RTGL_VERSION_API "001.006.000"
+#define RG_RTGL_VERSION_API "001.009.000"
 
 #ifdef RG_USE_SURFACE_WIN32
     #include <windows.h>
@@ -90,6 +90,13 @@ typedef enum RgResult
     RG_RESULT_ERROR_CANT_FIND_SHADER,
     RG_RESULT_ERROR_MEMORY_ALIGNMENT,
     RG_RESULT_ERROR_NO_VULKAN_EXTENSION,
+    RG_RESULT_OPENXR_LOADER_UNAVAILABLE,
+    RG_RESULT_OPENXR_RUNTIME_UNAVAILABLE,
+    RG_RESULT_OPENXR_VULKAN_REQUIREMENTS_UNSUPPORTED,
+    RG_RESULT_OPENXR_SESSION_ERROR,
+    RG_RESULT_OPENXR_SWAPCHAIN_ERROR,
+    RG_RESULT_OPENXR_FRAME_ERROR,
+    RG_RESULT_OPENXR_PRESENTATION_ERROR,
 } RgResult;
 
 typedef enum RgMessageSeverityFlagBits
@@ -185,6 +192,8 @@ typedef enum RgStructureType
     RG_STRUCTURE_TYPE_START_FRAME_RENDER_RESOLUTION_PARAMS  = 33,
     RG_STRUCTURE_TYPE_SPAWN_FLUID_INFO                      = 34,
     RG_STRUCTURE_TYPE_START_FRAME_FLUID_PARAMS              = 35,
+    RG_STRUCTURE_TYPE_OPENXR_PRESENTATION_CREATE_INFO_EXT   = 36,
+    RG_STRUCTURE_TYPE_OPENXR_VIRTUAL_SCREEN_SETTINGS_EXT    = 37,
 } RgStructureType;
 
 typedef enum RgTextureSwizzling
@@ -216,6 +225,28 @@ typedef struct RgQuaternion
 {
     float data[ 4 ];
 } RgQuaternion;
+
+typedef struct RgOpenXRPresentationCreateInfoEXT
+{
+    RgStructureType sType;
+    void*           pNext;
+    RgBool32        enable;
+    RgBool32        desktopMirror;
+} RgOpenXRPresentationCreateInfoEXT;
+
+typedef struct RgOpenXRVirtualScreenSettingsEXT
+{
+    RgStructureType sType;
+    void*           pNext;
+    int32_t         mode;
+    RgBool32        always;
+    float           size;
+    float           distance;
+    float           verticalPosition;
+    uint64_t        recenterRequest;
+    uint32_t        renderWidth;
+    uint32_t        renderHeight;
+} RgOpenXRVirtualScreenSettingsEXT;
 
 typedef struct RgInstanceCreateInfo
 {
@@ -565,6 +596,7 @@ typedef struct RgSpawnFluidInfo
     uint32_t        count;
 } RgSpawnFluidInfo;
 typedef RgResult( RGAPI_PTR* PFN_rgSpawnFluid )( const RgSpawnFluidInfo* pInfo );
+typedef RgResult( RGAPI_PTR* PFN_rgSetOpenXRVirtualScreenSettingsEXT )( const RgOpenXRVirtualScreenSettingsEXT* pInfo );
 
 
 
@@ -1271,6 +1303,7 @@ typedef struct RgInterface
     PFN_rgUtilGetSupportedFeatures        rgUtilGetSupportedFeatures;
     // Additional
     PFN_rgSpawnFluid                      rgSpawnFluid;
+    PFN_rgSetOpenXRVirtualScreenSettingsEXT rgSetOpenXRVirtualScreenSettingsEXT;
 } RgInterface;
 
 #if defined( _WIN32 )

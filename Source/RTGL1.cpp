@@ -130,6 +130,10 @@ RgResult RGAPI_CALL rgSpawnFluid( const RgSpawnFluidInfo* pInfo )
 {
     return Call( [ & ]( Device& d ) { d.SpawnFluid( pInfo ); } );
 }
+RgResult RGAPI_CALL rgSetOpenXRVirtualScreenSettingsEXT( const RgOpenXRVirtualScreenSettingsEXT* pInfo )
+{
+    return Call( [ & ]( Device& d ) { return d.SetOpenXRVirtualScreenSettings( pInfo ); } );
+}
 
 RgResult RGAPI_CALL rgUploadCamera( const RgCameraInfo* pInfo )
 {
@@ -362,6 +366,7 @@ RGAPI RgResult RGCONV RGAPI_CALL rgCreateInstance( const RgInstanceCreateInfo* p
             .rgUtilExportAsTGA                 = rgUtilExportAsTGA,
             .rgUtilGetSupportedFeatures        = rgUtilGetSupportedFeatures,
             .rgSpawnFluid                      = rgSpawnFluid,
+            .rgSetOpenXRVirtualScreenSettingsEXT = rgSetOpenXRVirtualScreenSettingsEXT,
         };
 
         // error if DLL has less functionality, otherwise, warning
@@ -390,7 +395,10 @@ RGAPI RgResult RGCONV RGAPI_CALL rgCreateInstance( const RgInstanceCreateInfo* p
     // So for now exceptions must not happen. But if they did, target application must be closed.
     catch( RTGL1::RgException& e )
     {
-        RTGL1::debug::Error( e.what() );
+        // Initialization errors are returned to the host so it can select a
+        // safe fallback. Do not route them through debug::Error: in a Debug
+        // build that shows a modal Abort/Retry/Ignore dialog and turns an
+        // ordinary OpenXR startup failure into a process exit.
         RTGL1::debug::detail::g_printSeverity = 0;
         RTGL1::debug::detail::g_print         = nullptr;
         return e.GetErrorCode();

@@ -132,6 +132,22 @@ option(RG_WITH_IMGUI            "Build RTGL1 with ImGui debug windows"      ON)
 option(RG_WITH_DX12             "Build RTGL1 with DX12 features"            ON)
 option(RG_WITH_NATIVE_DLSS      "Build RTGL1 with native DLSS2"             ON)
 
+option(RG_WITH_OPENXR          "Build RTGL1 with native OpenXR presentation" OFF)
+if (RG_WITH_OPENXR)
+    find_path(OPENXR_INCLUDE_DIR NAMES openxr/openxr.h HINTS ${OPENXR_DIR} $ENV{OPENXR_DIR} PATH_SUFFIXES include Include)
+    if (NOT OPENXR_INCLUDE_DIR)
+        message(FATAL_ERROR "RG_WITH_OPENXR requires an OpenXR SDK. Set OPENXR_DIR.")
+    endif()
+    message(STATUS "RG_WITH_OPENXR enabled: ${OPENXR_INCLUDE_DIR}")
+    add_definitions(-DRG_WITH_OPENXR -DXR_USE_GRAPHICS_API_VULKAN -DXR_NO_PROTOTYPES)
+    if (WIN32)
+        add_definitions(-DXR_USE_PLATFORM_WIN32)
+    endif()
+    list(APPEND Sources "Source/OpenXRPresenter.cpp")
+endif()
+
+
+
 option(RG_WITH_EXAMPLES         "Build with examples executable"            ON)
 
 
@@ -235,6 +251,9 @@ set_target_properties(RayTracedGL1 PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY $<IF:$<CONFIG:Debug>,${CMAKE_SOURCE_DIR}/Build/bin/debug,${CMAKE_SOURCE_DIR}/Build/bin>
 )
 target_include_directories(RayTracedGL1 PUBLIC "Include")
+if (RG_WITH_OPENXR)
+    target_include_directories(RayTracedGL1 PRIVATE "${OPENXR_INCLUDE_DIR}")
+endif()
 
 
 # Vulkan

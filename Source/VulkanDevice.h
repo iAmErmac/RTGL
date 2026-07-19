@@ -24,6 +24,10 @@
 
 #include <memory>
 
+#if defined(RG_WITH_OPENXR)
+#include "OpenXRPresenter.h"
+#endif
+
 // clang-format off
 #include "Common.h"
 
@@ -99,6 +103,7 @@ public:
 
     void StartFrame( const RgStartFrameInfo* pInfo );
     void DrawFrame( const RgDrawFrameInfo* pInfo );
+    RgResult SetOpenXRVirtualScreenSettings( const RgOpenXRVirtualScreenSettingsEXT* pInfo );
 
 
     bool IsUpscaleTechniqueAvailable( RgRenderUpscaleTechnique technique,
@@ -170,6 +175,9 @@ private:
     bool m_supportsRayQueryAndPositionFetch{ false };
 
     std::shared_ptr< PhysicalDevice > physDevice;
+#if defined(RG_WITH_OPENXR)
+    std::unique_ptr< OpenXRPresenter > openxr;
+#endif
     std::shared_ptr< Queues >         queues;
     std::shared_ptr< Swapchain >      swapchain;
 

@@ -89,6 +89,10 @@ VkCommandBuffer RTGL1::VulkanDevice::BeginFrame( const RgStartFrameInfo& info )
     const auto& resolution = pnext::get< RgStartFrameRenderResolutionParams >( info );
     const auto& fluidInfo  = pnext::get< RgStartFrameFluidParams >( info );
 
+#if defined(RG_WITH_OPENXR)
+    if( openxr ) openxr->BeginFrame();
+#endif
+
     swapchain->AcquireImage( info.vsync,
                              info.hdr,
                              MakeSwapchainType( resolution ),
@@ -1168,6 +1172,12 @@ void RTGL1::VulkanDevice::EndFrame( VkCommandBuffer cmd, FramebufferImageIndex r
     const auto rendered_size =
         framebuffers->GetFramebufSize( renderResolution.GetResolutionState(), rendered );
 
+#if defined(RG_WITH_OPENXR)
+    if( openxr && openxr->IsFrameActive() )
+    {
+        openxr->RecordBlit( cmd, framebuffers->GetImage( rendered, frameIndex ), rendered_size );
+    }
+#endif
 
     // present
     if( swapchain->WithDXGI() )
@@ -1309,6 +1319,10 @@ void RTGL1::VulkanDevice::EndFrame( VkCommandBuffer cmd, FramebufferImageIndex r
         }
     }
 
+#if defined(RG_WITH_OPENXR)
+    if( openxr && openxr->IsFrameActive() ) openxr->FinishFrame();
+#endif
+
     if( nvDlss3dx12 )
     {
         nvDlss3dx12->Reflex_PresentEnd();
@@ -1328,6 +1342,16 @@ void RTGL1::VulkanDevice::EndFrame( VkCommandBuffer cmd, FramebufferImageIndex r
 
 
 
+RgResult RTGL1::VulkanDevice::SetOpenXRVirtualScreenSettings( const RgOpenXRVirtualScreenSettingsEXT* pInfo )
+{
+    if( pInfo == nullptr ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
+    if( pInfo->sType != RG_STRUCTURE_TYPE_OPENXR_VIRTUAL_SCREEN_SETTINGS_EXT )
+        return RG_RESULT_WRONG_STRUCTURE_TYPE;
+#if defined(RG_WITH_OPENXR)
+    if( openxr ) return openxr->SetVirtualScreenSettings( *pInfo );
+#endif
+    return RG_RESULT_SUCCESS;
+}
 void RTGL1::VulkanDevice::StartFrame( const RgStartFrameInfo* pOriginalInfo )
 {
     if( currentFrameState.WasFrameStarted() )

@@ -20,6 +20,8 @@
 
 #include "GltfExporter.h"
 
+#include <ranges>
+
 #include "Const.h"
 #include "DrawFrameInfo.h"
 #include "JsonParser.h"

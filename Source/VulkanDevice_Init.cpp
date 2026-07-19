@@ -232,6 +232,15 @@ RTGL1::VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
     ValidateAndOverrideCreateInfo( info );
 
 
+    // OpenXR must establish the Vulkan requirements before RTGL creates Vulkan.
+#if defined(RG_WITH_OPENXR)
+    if( const auto* xrInfo = static_cast< const RgOpenXRPresentationCreateInfoEXT* >( info->pNext );
+        xrInfo && xrInfo->sType == RG_STRUCTURE_TYPE_OPENXR_PRESENTATION_CREATE_INFO_EXT && xrInfo->enable )
+    {
+        openxr = std::make_unique< OpenXRPresenter >( *xrInfo );
+    }
+#endif
+
     // init vulkan instance
     CreateInstance( *info );
 
@@ -248,7 +257,12 @@ RTGL1::VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
 
 
     // create selected physical device
+#if defined(RG_WITH_OPENXR)
+    const VkPhysicalDevice preferredPhysicalDevice = openxr ? openxr->GetPreferredPhysicalDevice( instance ) : VK_NULL_HANDLE;
+    physDevice = std::make_shared< PhysicalDevice >( instance, preferredPhysicalDevice );
+#else
     physDevice = std::make_shared< PhysicalDevice >( instance );
+#endif
     queues     = std::make_shared< Queues >( physDevice->Get(), surface );
 
     // create vulkan device and set extension function pointers
@@ -258,6 +272,12 @@ RTGL1::VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
 
     // set device
     queues->SetDevice( device );
+#if defined(RG_WITH_OPENXR)
+    if( openxr )
+    {
+        openxr->CreateSession( instance, physDevice->Get(), device, queues->GetGraphics(), queues->GetIndexGraphics() );
+    }
+#endif
 
 
     memAllocator = std::make_shared< MemoryAllocator >( 
@@ -558,6 +578,10 @@ RTGL1::VulkanDevice::~VulkanDevice()
 {
     vkDeviceWaitIdle( device );
 
+#if defined(RG_WITH_OPENXR)
+    openxr.reset();
+#endif
+
     observer.reset();
     physDevice.reset();
     queues.reset();
@@ -786,6 +810,16 @@ void RTGL1::VulkanDevice::CreateInstance( const RgInstanceCreateInfo& info )
         VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
 #endif
     };
+
+#if defined(RG_WITH_OPENXR)
+    if( openxr )
+    {
+        for( const char* extension : openxr->RequiredInstanceExtensions() )
+        {
+            if( std::ranges::find( extensions, extension ) == extensions.end() ) extensions.push_back( extension );
+        }
+    }
+#endif
 
     if( auto d = DLSS2::RequiredVulkanExtensions_Instance() )
     {
@@ -1045,6 +1079,16 @@ void RTGL1::VulkanDevice::CreateDevice()
         VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
 #endif // RG_USE_DX12
     };
+
+#if defined(RG_WITH_OPENXR)
+    if( openxr )
+    {
+        for( const char* extension : openxr->RequiredDeviceExtensions() )
+        {
+            if( std::ranges::find( deviceExtensions, extension ) == deviceExtensions.end() ) deviceExtensions.push_back( extension );
+        }
+    }
+#endif
 
     if( m_supportsRayQueryAndPositionFetch )
     {

@@ -27,7 +27,7 @@
 
 using namespace RTGL1;
 
-PhysicalDevice::PhysicalDevice( VkInstance instance )
+PhysicalDevice::PhysicalDevice( VkInstance instance, VkPhysicalDevice preferred )
     : physDevice( VK_NULL_HANDLE ), memoryProperties{}, rtPipelineProperties{}, asProperties{}
 {
     std::vector< VkPhysicalDevice > physicalDevices;
@@ -47,6 +47,17 @@ PhysicalDevice::PhysicalDevice( VkInstance instance )
 
         VkResult r = vkEnumeratePhysicalDevices( instance, &physCount, physicalDevices.data() );
         VK_CHECKERROR( r );
+    }
+
+    if( preferred != VK_NULL_HANDLE )
+    {
+        auto it = std::ranges::find( physicalDevices, preferred );
+        if( it == physicalDevices.end() )
+        {
+            throw RgException( RG_RESULT_CANT_FIND_SUPPORTED_PHYSICAL_DEVICE,
+                               "OpenXR selected a physical device that is not available to RTGL" );
+        }
+        physicalDevices = { preferred };
     }
 
     for( VkPhysicalDevice p : physicalDevices )
