@@ -104,6 +104,7 @@ public:
     void StartFrame( const RgStartFrameInfo* pInfo );
     void DrawFrame( const RgDrawFrameInfo* pInfo );
     RgResult SetOpenXRVirtualScreenSettings( const RgOpenXRVirtualScreenSettingsEXT* pInfo );
+    RgResult GetOpenXRInputSnapshotEXT( RgOpenXRInputSnapshotEXT* pSnapshot ) const;
 
 
     bool IsUpscaleTechniqueAvailable( RgRenderUpscaleTechnique technique,

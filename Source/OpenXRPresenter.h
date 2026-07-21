@@ -31,6 +31,7 @@ public:
     VkPhysicalDevice GetPreferredPhysicalDevice(VkInstance instance) const;
 
     RgResult SetVirtualScreenSettings(const RgOpenXRVirtualScreenSettingsEXT& settings);
+    RgResult GetInputSnapshot(RgOpenXRInputSnapshotEXT& snapshot) const;
     void CreateSession(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
                        VkQueue queue, uint32_t queueFamilyIndex);
     bool BeginFrame();
@@ -41,6 +42,9 @@ public:
 
 private:
     void LoadLoader();
+    void InitializeActions();
+    void AttachActions();
+    void SyncInputActions(RgOpenXRInputSnapshotEXT& snapshot);
     void LoadInstanceFunctions();
     void PollEvents();
     bool LocateHeadPose(XrTime displayTime, XrPosef& pose);
@@ -83,13 +87,38 @@ private:
     PFN_xrAcquireSwapchainImage acquireSwapchainImage = nullptr;
     PFN_xrWaitSwapchainImage waitSwapchainImage = nullptr;
     PFN_xrReleaseSwapchainImage releaseSwapchainImage = nullptr;
+    PFN_xrStringToPath stringToPath = nullptr;
+    PFN_xrCreateActionSet createActionSet = nullptr;
+    PFN_xrDestroyActionSet destroyActionSet = nullptr;
+    PFN_xrCreateAction createAction = nullptr;
+    PFN_xrDestroyAction destroyAction = nullptr;
+    PFN_xrSuggestInteractionProfileBindings suggestBindings = nullptr;
+    PFN_xrAttachSessionActionSets attachActionSets = nullptr;
+    PFN_xrSyncActions syncActions = nullptr;
+    PFN_xrGetActionStateFloat getActionStateFloat = nullptr;
+    PFN_xrGetActionStateVector2f getActionStateVector2f = nullptr;
+    PFN_xrGetActionStateBoolean getActionStateBoolean = nullptr;
+    PFN_xrCreateActionSpace createActionSpace = nullptr;
 
     XrInstance xrInstance = XR_NULL_HANDLE;
     XrSystemId systemId = XR_NULL_SYSTEM_ID;
     XrSession session = XR_NULL_HANDLE;
+    RgOpenXRInputSnapshotEXT inputSnapshot{};
     XrSpace space = XR_NULL_HANDLE;
+    XrSpace leftHandSpace = XR_NULL_HANDLE, rightHandSpace = XR_NULL_HANDLE;
     XrSpace headSpace = XR_NULL_HANDLE;
     XrSwapchain swapchain = XR_NULL_HANDLE;
+    XrActionSet actionSet = XR_NULL_HANDLE;
+    XrAction leftStick = XR_NULL_HANDLE, rightStick = XR_NULL_HANDLE;
+    XrAction leftPoseAction = XR_NULL_HANDLE, rightPoseAction = XR_NULL_HANDLE;
+    XrAction leftTrigger = XR_NULL_HANDLE, rightTrigger = XR_NULL_HANDLE;
+    XrAction leftGrip = XR_NULL_HANDLE, rightGrip = XR_NULL_HANDLE;
+    XrAction leftGripClick = XR_NULL_HANDLE, rightGripClick = XR_NULL_HANDLE;
+    XrAction leftMenu = XR_NULL_HANDLE, rightMenu = XR_NULL_HANDLE;
+    XrAction leftFaceX = XR_NULL_HANDLE, rightFaceX = XR_NULL_HANDLE;
+    XrAction leftFaceY = XR_NULL_HANDLE, rightFaceY = XR_NULL_HANDLE;
+    XrAction leftThumbClick = XR_NULL_HANDLE, rightThumbClick = XR_NULL_HANDLE;
+    XrPath leftHandPath = XR_NULL_PATH, rightHandPath = XR_NULL_PATH;
     XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
     XrFrameState frameState{XR_TYPE_FRAME_STATE};
     XrCompositionLayerQuad quadLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};

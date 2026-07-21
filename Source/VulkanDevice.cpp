@@ -1352,6 +1352,17 @@ RgResult RTGL1::VulkanDevice::SetOpenXRVirtualScreenSettings( const RgOpenXRVirt
 #endif
     return RG_RESULT_SUCCESS;
 }
+RgResult RTGL1::VulkanDevice::GetOpenXRInputSnapshotEXT(RgOpenXRInputSnapshotEXT* pSnapshot) const
+{
+    if (pSnapshot == nullptr) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
+    *pSnapshot = {};
+    pSnapshot->structSize = sizeof(*pSnapshot);
+    pSnapshot->version = RG_OPENXR_INPUT_SNAPSHOT_EXT_VERSION;
+#if defined(RG_WITH_OPENXR)
+    if (openxr) return openxr->GetInputSnapshot(*pSnapshot);
+#endif
+    return RG_RESULT_SUCCESS;
+}
 void RTGL1::VulkanDevice::StartFrame( const RgStartFrameInfo* pOriginalInfo )
 {
     if( currentFrameState.WasFrameStarted() )

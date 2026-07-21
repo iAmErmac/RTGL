@@ -247,6 +247,57 @@ typedef struct RgOpenXRVirtualScreenSettingsEXT
     uint32_t        renderWidth;
     uint32_t        renderHeight;
 } RgOpenXRVirtualScreenSettingsEXT;
+// Optional RTGL1-native OpenXR input extension. Queried from the DLL directly;
+// it is intentionally not part of RgInterface.
+#define RG_OPENXR_INPUT_SNAPSHOT_EXT_VERSION 2u
+typedef enum RgOpenXRInputCapabilityBitsEXT
+{
+    RG_OPENXR_INPUT_CAPABILITY_NONE                = 0,
+    RG_OPENXR_INPUT_CAPABILITY_INTERACTION_PROFILE = 1u << 0,
+    RG_OPENXR_INPUT_CAPABILITY_LEFT                = 1u << 1,
+    RG_OPENXR_INPUT_CAPABILITY_RIGHT               = 1u << 2,
+} RgOpenXRInputCapabilityBitsEXT;
+
+typedef struct RgOpenXRPoseEXT
+{
+    RgFloat3D position;
+    RgQuaternion orientation;
+    RgBool32 valid;
+} RgOpenXRPoseEXT;
+
+typedef struct RgOpenXRControllerStateEXT
+{
+    RgFloat2D stick;
+    RgFloat2D trackpad;
+    float trigger;
+    float grip;
+    RgBool32 menu;
+    RgBool32 faceA;
+    RgBool32 faceB;
+    RgBool32 faceX;
+    RgBool32 faceY;
+    RgBool32 thumbClick;
+    RgBool32 tracked;
+    RgOpenXRPoseEXT pose;
+} RgOpenXRControllerStateEXT;
+
+typedef struct RgOpenXRInputSnapshotEXT
+{
+    uint32_t structSize;
+    uint32_t version;
+    uint32_t capabilities;
+    RgBool32 sessionRunning;
+    RgBool32 focused;
+    int64_t frameTime;
+    RgOpenXRControllerStateEXT left;
+    RgOpenXRControllerStateEXT right;
+    RgOpenXRPoseEXT virtualScreenPose;
+    RgFloat2D virtualScreenSize;
+    uint64_t virtualScreenRevision;
+} RgOpenXRInputSnapshotEXT;
+
+typedef RgResult ( RGAPI_PTR* PFN_rgGetOpenXRInputSnapshotEXT )( RgOpenXRInputSnapshotEXT* pSnapshot );
+RGAPI RgResult RGAPI_CALL rgGetOpenXRInputSnapshotEXT( RgOpenXRInputSnapshotEXT* pSnapshot );
 
 typedef struct RgInstanceCreateInfo
 {

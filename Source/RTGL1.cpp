@@ -301,6 +301,10 @@ void RGAPI_CALL rgUtilExportAsTGA( const void* pPixels,
 
 extern "C"
 {
+RGAPI RgResult RGAPI_CALL rgGetOpenXRInputSnapshotEXT( RgOpenXRInputSnapshotEXT* pSnapshot )
+{
+    return Call( [ & ]( Device& d ) { return d.GetOpenXRInputSnapshotEXT( pSnapshot ); } );
+}
 RGAPI RgResult RGCONV RGAPI_CALL rgCreateInstance( const RgInstanceCreateInfo* pInfo,
                                                    RgInterface*                pInterface )
 {

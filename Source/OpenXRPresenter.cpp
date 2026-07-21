@@ -292,6 +292,199 @@ RgResult OpenXRPresenter::SetVirtualScreenSettings(const RgOpenXRVirtualScreenSe
     activeVerticalPosition = verticalPosition;
     return RG_RESULT_SUCCESS;
 }
+void OpenXRPresenter::InitializeActions()
+{
+    if (!createActionSet || !createAction || !attachActionSets || !stringToPath) return;
+    stringToPath(xrInstance, "/user/hand/left", &leftHandPath);
+    stringToPath(xrInstance, "/user/hand/right", &rightHandPath);
+    XrActionSetCreateInfo setInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
+    std::strcpy(setInfo.actionSetName, "doomxrt");
+    std::strcpy(setInfo.localizedActionSetName, "DoomXRT");
+    if (createActionSet(xrInstance, &setInfo, &actionSet) != XR_SUCCESS) return;
+    const XrPath handPaths[] = {leftHandPath, rightHandPath};
+    auto make = [&](const char* name, XrActionType type, XrAction& out, XrAction& mirror) {
+        XrActionCreateInfo info{XR_TYPE_ACTION_CREATE_INFO};
+        info.actionType = type;
+        std::strcpy(info.actionName, name);
+        std::strcpy(info.localizedActionName, name);
+        info.countSubactionPaths = 2;
+        info.subactionPaths = handPaths;
+        if (createAction(actionSet, &info, &out) != XR_SUCCESS) return false;
+        mirror = out;
+        return true;
+    };
+    // A single action with both hand paths is required by several OpenXR runtimes.
+    // This matches DoomXR's working action model and is queried per hand below.
+    make("stick", XR_ACTION_TYPE_VECTOR2F_INPUT, leftStick, rightStick);
+    make("pose", XR_ACTION_TYPE_POSE_INPUT, leftPoseAction, rightPoseAction);
+    make("trigger", XR_ACTION_TYPE_FLOAT_INPUT, leftTrigger, rightTrigger);
+    make("grip", XR_ACTION_TYPE_FLOAT_INPUT, leftGrip, rightGrip);
+    make("grip_click", XR_ACTION_TYPE_BOOLEAN_INPUT, leftGripClick, rightGripClick);
+    make("menu", XR_ACTION_TYPE_BOOLEAN_INPUT, leftMenu, rightMenu);
+    make("face_x", XR_ACTION_TYPE_BOOLEAN_INPUT, leftFaceX, rightFaceX);
+    make("face_y", XR_ACTION_TYPE_BOOLEAN_INPUT, leftFaceY, rightFaceY);
+    make("thumb_click", XR_ACTION_TYPE_BOOLEAN_INPUT, leftThumbClick, rightThumbClick);
+    XrPath touchProfile = XR_NULL_PATH;
+    stringToPath(xrInstance, "/interaction_profiles/oculus/touch_controller", &touchProfile);
+    auto path = [&](const char* value) { XrPath result = XR_NULL_PATH; stringToPath(xrInstance, value, &result); return result; };
+    XrActionSuggestedBinding bindings[] = {
+        {leftStick, path("/user/hand/left/input/thumbstick")}, {rightStick, path("/user/hand/right/input/thumbstick")},
+        {leftPoseAction, path("/user/hand/left/input/aim/pose")}, {rightPoseAction, path("/user/hand/right/input/aim/pose")},
+        {leftTrigger, path("/user/hand/left/input/trigger/value")}, {rightTrigger, path("/user/hand/right/input/trigger/value")},
+        {leftGrip, path("/user/hand/left/input/squeeze/value")}, {rightGrip, path("/user/hand/right/input/squeeze/value")},
+        {leftGripClick, path("/user/hand/left/input/squeeze/click")}, {rightGripClick, path("/user/hand/right/input/squeeze/click")},
+        {leftMenu, path("/user/hand/left/input/menu/click")},
+        {leftFaceX, path("/user/hand/left/input/x/click")}, {rightFaceX, path("/user/hand/right/input/a/click")},
+        {leftFaceY, path("/user/hand/left/input/y/click")}, {rightFaceY, path("/user/hand/right/input/b/click")},
+        {leftThumbClick, path("/user/hand/left/input/thumbstick/click")}, {rightThumbClick, path("/user/hand/right/input/thumbstick/click")},
+    };
+    XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+    suggested.interactionProfile = touchProfile;
+    suggested.countSuggestedBindings = sizeof(bindings) / sizeof(bindings[0]);
+    suggested.suggestedBindings = bindings;
+    if (suggestBindings) suggestBindings(xrInstance, &suggested);
+    auto suggestProfile = [&](const char* profile, const std::initializer_list<std::pair<XrAction, const char*>>& entries) {
+        XrPath profilePath = XR_NULL_PATH; stringToPath(xrInstance, profile, &profilePath);
+        std::vector<XrActionSuggestedBinding> profileBindings;
+        for (const auto& entry : entries) profileBindings.push_back({entry.first, path(entry.second)});
+        XrInteractionProfileSuggestedBinding profileSuggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        profileSuggested.interactionProfile = profilePath;
+        profileSuggested.countSuggestedBindings = static_cast<uint32_t>(profileBindings.size());
+        profileSuggested.suggestedBindings = profileBindings.data();
+        suggestBindings(xrInstance, &profileSuggested);
+    };
+    // Quest 3 / Touch Plus is exposed as its own interaction profile by Meta runtimes.
+    suggestProfile("/interaction_profiles/meta/touch_plus_controller", {
+        {leftStick, "/user/hand/left/input/thumbstick"}, {rightStick, "/user/hand/right/input/thumbstick"},
+        {leftTrigger, "/user/hand/left/input/trigger/value"}, {rightTrigger, "/user/hand/right/input/trigger/value"},
+        {leftGrip, "/user/hand/left/input/squeeze/value"}, {rightGrip, "/user/hand/right/input/squeeze/value"},
+        {leftGripClick, "/user/hand/left/input/squeeze/click"}, {rightGripClick, "/user/hand/right/input/squeeze/click"},
+        {leftMenu, "/user/hand/left/input/menu/click"},
+        {leftFaceX, "/user/hand/left/input/x/click"}, {rightFaceX, "/user/hand/right/input/a/click"},
+        {leftFaceY, "/user/hand/left/input/y/click"}, {rightFaceY, "/user/hand/right/input/b/click"},
+        {leftThumbClick, "/user/hand/left/input/thumbstick/click"}, {rightThumbClick, "/user/hand/right/input/thumbstick/click"},
+        {leftPoseAction, "/user/hand/left/input/aim/pose"}, {rightPoseAction, "/user/hand/right/input/aim/pose"}
+    });
+    suggestProfile("/interaction_profiles/valve/index_controller", {
+        {leftStick, "/user/hand/left/input/thumbstick"}, {rightStick, "/user/hand/right/input/thumbstick"},
+        {leftTrigger, "/user/hand/left/input/trigger/value"}, {rightTrigger, "/user/hand/right/input/trigger/value"},
+        {leftGrip, "/user/hand/left/input/squeeze/value"}, {rightGrip, "/user/hand/right/input/squeeze/value"},
+        {leftGripClick, "/user/hand/left/input/squeeze/click"}, {rightGripClick, "/user/hand/right/input/squeeze/click"},
+
+        {leftThumbClick, "/user/hand/left/input/thumbstick/click"}, {rightThumbClick, "/user/hand/right/input/thumbstick/click"},
+        {leftPoseAction, "/user/hand/left/input/aim/pose"}, {rightPoseAction, "/user/hand/right/input/aim/pose"}
+    });
+    suggestProfile("/interaction_profiles/microsoft/motion_controller", {
+        {leftStick, "/user/hand/left/input/thumbstick"}, {rightStick, "/user/hand/right/input/thumbstick"},
+        {leftTrigger, "/user/hand/left/input/trigger/value"}, {rightTrigger, "/user/hand/right/input/trigger/value"},
+        {leftGrip, "/user/hand/left/input/squeeze/value"}, {rightGrip, "/user/hand/right/input/squeeze/value"},
+        {leftGripClick, "/user/hand/left/input/squeeze/click"}, {rightGripClick, "/user/hand/right/input/squeeze/click"},
+
+        {leftPoseAction, "/user/hand/left/input/aim/pose"}, {rightPoseAction, "/user/hand/right/input/aim/pose"}
+    });
+
+}
+
+void OpenXRPresenter::AttachActions()
+{
+    if (session == XR_NULL_HANDLE || actionSet == XR_NULL_HANDLE || !attachActionSets)
+        Fail(RG_RESULT_OPENXR_SESSION_ERROR, "OpenXR input action setup is unavailable");
+
+    XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+    attach.countActionSets = 1;
+    attach.actionSets = &actionSet;
+    if (attachActionSets(session, &attach) != XR_SUCCESS)
+        Fail(RG_RESULT_OPENXR_SESSION_ERROR, "OpenXR action-set attachment failed");
+    if (!createActionSpace)
+        Fail(RG_RESULT_OPENXR_SESSION_ERROR, "OpenXR action-space creation is unavailable");
+
+    XrActionSpaceCreateInfo leftInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+    leftInfo.action = leftPoseAction;
+    leftInfo.subactionPath = leftHandPath;
+    leftInfo.poseInActionSpace = {{0, 0, 0, 1}, {0, 0, 0}};
+    if (createActionSpace(session, &leftInfo, &leftHandSpace) != XR_SUCCESS)
+        Fail(RG_RESULT_OPENXR_SESSION_ERROR, "OpenXR left-hand action-space creation failed");
+
+    XrActionSpaceCreateInfo rightInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+    rightInfo.action = rightPoseAction;
+    rightInfo.subactionPath = rightHandPath;
+    rightInfo.poseInActionSpace = {{0, 0, 0, 1}, {0, 0, 0}};
+    if (createActionSpace(session, &rightInfo, &rightHandSpace) != XR_SUCCESS)
+        Fail(RG_RESULT_OPENXR_SESSION_ERROR, "OpenXR right-hand action-space creation failed");
+}
+
+void OpenXRPresenter::SyncInputActions(RgOpenXRInputSnapshotEXT& snapshot)
+{
+    if (!syncActions || actionSet == XR_NULL_HANDLE || !sessionRunning) return;
+    XrActiveActionSet active{actionSet, XR_NULL_PATH};
+    XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO};
+    sync.countActiveActionSets = 1;
+    sync.activeActionSets = &active;
+    if (syncActions(session, &sync) != XR_SUCCESS) return;
+
+    auto vec = [&](XrAction action, XrPath hand, RgOpenXRControllerStateEXT& out) {
+        if (!action) return;
+        XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO}; get.action = action; get.subactionPath = hand;
+        XrActionStateVector2f state{XR_TYPE_ACTION_STATE_VECTOR2F};
+        if (getActionStateVector2f(session, &get, &state) == XR_SUCCESS && state.isActive) {
+            out.stick.data[0] = state.currentState.x; out.stick.data[1] = state.currentState.y;
+            out.tracked = RG_TRUE;
+        }
+    };
+    auto scalar = [&](XrAction action, XrPath hand, float& out) {
+        if (!action) return;
+        XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO}; get.action = action; get.subactionPath = hand;
+        XrActionStateFloat state{XR_TYPE_ACTION_STATE_FLOAT};
+        if (getActionStateFloat(session, &get, &state) == XR_SUCCESS && state.isActive) out = state.currentState;
+    };
+    auto button = [&](XrAction action, XrPath hand, RgBool32& out) {
+        if (!action) return;
+        XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO}; get.action = action; get.subactionPath = hand;
+        XrActionStateBoolean state{XR_TYPE_ACTION_STATE_BOOLEAN};
+        if (getActionStateBoolean(session, &get, &state) == XR_SUCCESS && state.isActive) out = state.currentState ? RG_TRUE : RG_FALSE;
+    };
+    vec(leftStick, leftHandPath, snapshot.left); vec(rightStick, rightHandPath, snapshot.right);
+    scalar(leftTrigger, leftHandPath, snapshot.left.trigger); scalar(rightTrigger, rightHandPath, snapshot.right.trigger);
+    scalar(leftGrip, leftHandPath, snapshot.left.grip); scalar(rightGrip, rightHandPath, snapshot.right.grip);
+    auto gripClick = [&](XrAction action, XrPath hand, float& out) {
+        if (!action) return;
+        XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO}; get.action = action; get.subactionPath = hand;
+        XrActionStateBoolean state{XR_TYPE_ACTION_STATE_BOOLEAN};
+        if (getActionStateBoolean(session, &get, &state) == XR_SUCCESS && state.isActive && state.currentState)
+            out = 1.0f;
+    };
+    gripClick(leftGripClick, leftHandPath, snapshot.left.grip); gripClick(rightGripClick, rightHandPath, snapshot.right.grip);
+    button(leftMenu, leftHandPath, snapshot.left.menu); button(rightMenu, rightHandPath, snapshot.right.menu);
+    button(leftFaceX, leftHandPath, snapshot.left.faceX); button(rightFaceX, rightHandPath, snapshot.right.faceA);
+    button(leftFaceY, leftHandPath, snapshot.left.faceY); button(rightFaceY, rightHandPath, snapshot.right.faceB);
+    button(leftThumbClick, leftHandPath, snapshot.left.thumbClick); button(rightThumbClick, rightHandPath, snapshot.right.thumbClick);
+    auto pose = [&](XrSpace handSpace, RgOpenXRPoseEXT& out) {
+        if (!locateSpace || handSpace == XR_NULL_HANDLE || space == XR_NULL_HANDLE) return;
+        XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
+        if (locateSpace(handSpace, space, frameState.predictedDisplayTime, &location) == XR_SUCCESS &&
+            (location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+            (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+            out.position.data[0] = location.pose.position.x; out.position.data[1] = location.pose.position.y; out.position.data[2] = location.pose.position.z;
+            out.orientation.data[0] = location.pose.orientation.x; out.orientation.data[1] = location.pose.orientation.y; out.orientation.data[2] = location.pose.orientation.z; out.orientation.data[3] = location.pose.orientation.w;
+            out.valid = RG_TRUE;
+        }
+    };
+    pose(leftHandSpace, snapshot.left.pose); pose(rightHandSpace, snapshot.right.pose);
+    snapshot.virtualScreenPose.position.data[0] = quadLayer.pose.position.x; snapshot.virtualScreenPose.position.data[1] = quadLayer.pose.position.y; snapshot.virtualScreenPose.position.data[2] = quadLayer.pose.position.z;
+    snapshot.virtualScreenPose.orientation.data[0] = quadLayer.pose.orientation.x; snapshot.virtualScreenPose.orientation.data[1] = quadLayer.pose.orientation.y; snapshot.virtualScreenPose.orientation.data[2] = quadLayer.pose.orientation.z; snapshot.virtualScreenPose.orientation.data[3] = quadLayer.pose.orientation.w; snapshot.virtualScreenPose.valid = RG_TRUE;
+    snapshot.virtualScreenSize.data[0] = quadLayer.size.width; snapshot.virtualScreenSize.data[1] = quadLayer.size.height; snapshot.virtualScreenRevision = consumedRecenterRequest;
+    snapshot.capabilities = RG_OPENXR_INPUT_CAPABILITY_INTERACTION_PROFILE | RG_OPENXR_INPUT_CAPABILITY_LEFT | RG_OPENXR_INPUT_CAPABILITY_RIGHT;
+}
+RgResult OpenXRPresenter::GetInputSnapshot(RgOpenXRInputSnapshotEXT& snapshot) const
+{
+    snapshot = inputSnapshot;
+    snapshot.structSize = sizeof(snapshot);
+    snapshot.version = RG_OPENXR_INPUT_SNAPSHOT_EXT_VERSION;
+    snapshot.sessionRunning = sessionRunning ? RG_TRUE : RG_FALSE;
+    snapshot.focused = sessionState == XR_SESSION_STATE_FOCUSED ? RG_TRUE : RG_FALSE;
+    snapshot.frameTime = static_cast<int64_t>(frameState.predictedDisplayTime);
+    return RG_RESULT_SUCCESS;
+}
 void OpenXRPresenter::LoadInstanceFunctions()
 {
 #define LOAD_XR(api, member) do { PFN_xrVoidFunction function = nullptr; if (getInstanceProcAddr(xrInstance, #api, &function) != XR_SUCCESS || !function) Fail(RG_RESULT_OPENXR_RUNTIME_UNAVAILABLE, #api " is unavailable"); member = reinterpret_cast<PFN_##api>(function); } while (false)
@@ -318,6 +511,18 @@ void OpenXRPresenter::LoadInstanceFunctions()
     LOAD_XR(xrAcquireSwapchainImage, acquireSwapchainImage);
     LOAD_XR(xrWaitSwapchainImage, waitSwapchainImage);
     LOAD_XR(xrReleaseSwapchainImage, releaseSwapchainImage);
+    LOAD_XR(xrStringToPath, stringToPath);
+    LOAD_XR(xrCreateActionSet, createActionSet);
+    LOAD_XR(xrDestroyActionSet, destroyActionSet);
+    LOAD_XR(xrCreateAction, createAction);
+    LOAD_XR(xrDestroyAction, destroyAction);
+    LOAD_XR(xrSuggestInteractionProfileBindings, suggestBindings);
+    LOAD_XR(xrAttachSessionActionSets, attachActionSets);
+    LOAD_XR(xrSyncActions, syncActions);
+    LOAD_XR(xrGetActionStateFloat, getActionStateFloat);
+    LOAD_XR(xrGetActionStateVector2f, getActionStateVector2f);
+    LOAD_XR(xrGetActionStateBoolean, getActionStateBoolean);
+    LOAD_XR(xrCreateActionSpace, createActionSpace);
     LOAD_XR_OPTIONAL(xrGetVulkanInstanceExtensionsKHR, getVulkanInstanceExtensions);
     LOAD_XR_OPTIONAL(xrGetVulkanDeviceExtensionsKHR, getVulkanDeviceExtensions);
     LOAD_XR_OPTIONAL(xrGetVulkanGraphicsRequirements2KHR, getVulkanGraphicsRequirements2);
@@ -352,8 +557,11 @@ void OpenXRPresenter::CreateSession(VkInstance instance, VkPhysicalDevice physic
     XrSessionCreateInfo sessionInfo{XR_TYPE_SESSION_CREATE_INFO};
     sessionInfo.next = &binding;
     sessionInfo.systemId = systemId;
+    InitializeActions();
+
     if (createSession(xrInstance, &sessionInfo, &session) != XR_SUCCESS)
         Fail(RG_RESULT_OPENXR_SESSION_ERROR, "OpenXR Vulkan session creation failed");
+    AttachActions();
 
     XrReferenceSpaceCreateInfo viewSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     viewSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
@@ -594,6 +802,13 @@ bool OpenXRPresenter::BeginFrame()
         Fail(RG_RESULT_OPENXR_FRAME_ERROR, "OpenXR swapchain acquire failed");
     imageAcquired = true;
     frameActive = true;
+    inputSnapshot = {};
+    inputSnapshot.structSize = sizeof(inputSnapshot);
+    inputSnapshot.version = RG_OPENXR_INPUT_SNAPSHOT_EXT_VERSION;
+    inputSnapshot.sessionRunning = RG_TRUE;
+    inputSnapshot.focused = sessionState == XR_SESSION_STATE_FOCUSED ? RG_TRUE : RG_FALSE;
+    inputSnapshot.frameTime = static_cast<int64_t>(frameState.predictedDisplayTime);
+    SyncInputActions(inputSnapshot);
     return true;
 }
 
