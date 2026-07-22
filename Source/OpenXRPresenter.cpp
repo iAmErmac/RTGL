@@ -292,6 +292,21 @@ RgResult OpenXRPresenter::SetVirtualScreenSettings(const RgOpenXRVirtualScreenSe
     activeVerticalPosition = verticalPosition;
     return RG_RESULT_SUCCESS;
 }
+RgResult OpenXRPresenter::SetPresentationSettings(const RgOpenXRPresentationSettingsEXT& settings)
+{
+    if( settings.structSize != sizeof(settings) || settings.version != RG_OPENXR_PRESENTATION_EXT_VERSION ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
+    if( settings.presentationMode != RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT && settings.presentationMode != RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
+    if( settings.mirrorMode < RG_OPENXR_MIRROR_MODE_LEFT_EYE_EXT || settings.mirrorMode > RG_OPENXR_MIRROR_MODE_OFF_EXT || settings.eyeRenderScale <= 0.0f ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
+    if( settings.requestSerial == acceptedPresentationSerial ) return RG_RESULT_SUCCESS;
+    requestedPresentationSettings = settings;
+    acceptedPresentationSerial = settings.requestSerial;
+    return RG_RESULT_SUCCESS;
+}
+RgResult OpenXRPresenter::GetFrameState(RgOpenXRFrameStateEXT& state) const
+{
+    state = xrFrameState;
+    return RG_RESULT_SUCCESS;
+}
 void OpenXRPresenter::InitializeActions()
 {
     if (!createActionSet || !createAction || !attachActionSets || !stringToPath) return;
@@ -500,6 +515,7 @@ void OpenXRPresenter::LoadInstanceFunctions()
     LOAD_XR(xrCreateReferenceSpace, createReferenceSpace);
     LOAD_XR(xrDestroySpace, destroySpace);
     LOAD_XR(xrLocateSpace, locateSpace);
+    LOAD_XR(xrLocateViews, locateViews);
     LOAD_XR(xrEnumerateViewConfigurationViews, enumerateViewConfigurationViews);
     LOAD_XR(xrEnumerateSwapchainFormats, enumerateSwapchainFormats);
     LOAD_XR(xrCreateSwapchain, createSwapchain);
@@ -790,7 +806,42 @@ bool OpenXRPresenter::BeginFrame()
     XrFrameWaitInfo waitInfo{XR_TYPE_FRAME_WAIT_INFO};
     if (waitFrame(session, &waitInfo, &frameState) != XR_SUCCESS)
         Fail(RG_RESULT_OPENXR_FRAME_ERROR, "OpenXR frame wait failed");
+
+    xrFrameState.sessionRunning = sessionRunning;
+    xrFrameState.focused = sessionState == XR_SESSION_STATE_FOCUSED;
+    xrFrameState.frameValid = RG_TRUE;
+    xrFrameState.predictedDisplayTime = static_cast<int64_t>(frameState.predictedDisplayTime);
+    xrFrameState.requestedPresentationMode = requestedPresentationSettings.presentationMode;
+    xrFrameState.requestedMirrorMode = requestedPresentationSettings.mirrorMode;
+    xrFrameState.activePresentationMode = RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT;
+    xrFrameState.activeMirrorMode = RG_OPENXR_MIRROR_MODE_OFF_EXT;
+    xrFrameState.fallbackReason = requestedPresentationSettings.presentationMode == RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT ? RG_OPENXR_PRESENTATION_FALLBACK_NOT_READY_EXT : RG_OPENXR_PRESENTATION_FALLBACK_NONE_EXT;
+    xrFrameState = {sizeof(RgOpenXRFrameStateEXT), RG_OPENXR_PRESENTATION_EXT_VERSION};
     UpdateQuadPose(frameState.predictedDisplayTime);
+    XrViewState viewState{XR_TYPE_VIEW_STATE};
+    XrViewLocateInfo viewLocateInfo{XR_TYPE_VIEW_LOCATE_INFO};
+    viewLocateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+    viewLocateInfo.displayTime = frameState.predictedDisplayTime;
+    viewLocateInfo.space = space;
+    uint32_t viewCount = 0;
+    if( locateViews && locateViews(session, &viewLocateInfo, &viewState, 2, &viewCount, locatedViews) == XR_SUCCESS && viewCount >= 2 )
+    {
+        for( uint32_t eye = 0; eye < 2; ++eye )
+        {
+            const auto& view = locatedViews[eye];
+            auto& out = xrFrameState.eyes[eye];
+            const XrSpaceLocationFlags validFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+            if( (viewState.viewStateFlags & validFlags) != validFlags ) continue;
+            out.pose.position = {view.pose.position.x, view.pose.position.y, view.pose.position.z};
+            out.pose.orientation = {{view.pose.orientation.x, view.pose.orientation.y, view.pose.orientation.z, view.pose.orientation.w}};
+            out.pose.valid = RG_TRUE;
+            out.fieldOfView[0] = view.fov.angleLeft; out.fieldOfView[1] = view.fov.angleRight; out.fieldOfView[2] = view.fov.angleUp; out.fieldOfView[3] = view.fov.angleDown;
+            const float l = std::tan(view.fov.angleLeft), r = std::tan(view.fov.angleRight), u = std::tan(view.fov.angleUp), d = std::tan(view.fov.angleDown);
+            const float n = 0.01f, f = 1000.0f;
+            std::fill(std::begin(out.projection), std::end(out.projection), 0.0f);
+            out.projection[0] = 2.0f / (r - l); out.projection[5] = 2.0f / (u - d); out.projection[8] = (r + l) / (r - l); out.projection[9] = (u + d) / (u - d); out.projection[10] = -(f + n) / (f - n); out.projection[11] = -1.0f; out.projection[14] = -(2.0f * f * n) / (f - n);
+        }
+    }
     XrFrameBeginInfo frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
     if (beginFrame(session, &frameBeginInfo) != XR_SUCCESS)
         Fail(RG_RESULT_OPENXR_FRAME_ERROR, "OpenXR frame begin failed");
@@ -809,6 +860,24 @@ bool OpenXRPresenter::BeginFrame()
     inputSnapshot.focused = sessionState == XR_SESSION_STATE_FOCUSED ? RG_TRUE : RG_FALSE;
     inputSnapshot.frameTime = static_cast<int64_t>(frameState.predictedDisplayTime);
     SyncInputActions(inputSnapshot);
+
+    xrFrameState.capabilities = RG_OPENXR_PRESENTATION_CAPABILITY_VIRTUAL_SCREEN_EXT;
+    if( viewCount >= 2 ) xrFrameState.capabilities |= RG_OPENXR_PRESENTATION_CAPABILITY_STEREO_PROJECTION_EXT;
+    xrFrameState.sessionRunning = sessionRunning;
+    xrFrameState.focused = sessionState == XR_SESSION_STATE_FOCUSED;
+    xrFrameState.frameValid = RG_TRUE;
+    xrFrameState.predictedDisplayTime = static_cast<int64_t>(frameState.predictedDisplayTime);
+    XrPosef headPose{};
+    if( LocateHeadPose(frameState.predictedDisplayTime, headPose) ) {
+        xrFrameState.headPose.position = {headPose.position.x, headPose.position.y, headPose.position.z};
+        xrFrameState.headPose.orientation = {{headPose.orientation.x, headPose.orientation.y, headPose.orientation.z, headPose.orientation.w}};
+        xrFrameState.headPose.valid = RG_TRUE;
+    }
+    xrFrameState.requestedPresentationMode = requestedPresentationSettings.presentationMode;
+    xrFrameState.requestedMirrorMode = requestedPresentationSettings.mirrorMode;
+    xrFrameState.activePresentationMode = RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT;
+    xrFrameState.activeMirrorMode = RG_OPENXR_MIRROR_MODE_OFF_EXT;
+    xrFrameState.fallbackReason = requestedPresentationSettings.presentationMode == RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT ? RG_OPENXR_PRESENTATION_FALLBACK_NOT_READY_EXT : RG_OPENXR_PRESENTATION_FALLBACK_NONE_EXT;
     return true;
 }
 

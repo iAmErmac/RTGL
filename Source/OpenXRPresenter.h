@@ -32,6 +32,8 @@ public:
 
     RgResult SetVirtualScreenSettings(const RgOpenXRVirtualScreenSettingsEXT& settings);
     RgResult GetInputSnapshot(RgOpenXRInputSnapshotEXT& snapshot) const;
+    RgResult SetPresentationSettings(const RgOpenXRPresentationSettingsEXT& settings);
+    RgResult GetFrameState(RgOpenXRFrameStateEXT& state) const;
     void CreateSession(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
                        VkQueue queue, uint32_t queueFamilyIndex);
     bool BeginFrame();
@@ -76,6 +78,7 @@ private:
     PFN_xrCreateReferenceSpace createReferenceSpace = nullptr;
     PFN_xrDestroySpace destroySpace = nullptr;
     PFN_xrLocateSpace locateSpace = nullptr;
+    PFN_xrLocateViews locateViews = nullptr;
     PFN_xrEnumerateViewConfigurationViews enumerateViewConfigurationViews = nullptr;
     PFN_xrEnumerateSwapchainFormats enumerateSwapchainFormats = nullptr;
     PFN_xrCreateSwapchain createSwapchain = nullptr;
@@ -133,6 +136,10 @@ private:
     bool sessionRunning = false;
     bool frameActive = false;
     bool imageAcquired = false;
+    RgOpenXRPresentationSettingsEXT requestedPresentationSettings{sizeof(RgOpenXRPresentationSettingsEXT), RG_OPENXR_PRESENTATION_EXT_VERSION, RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT, RG_OPENXR_MIRROR_MODE_LEFT_EYE_EXT, 1.0f, 0.0f, 1.0f, 0};
+    uint64_t acceptedPresentationSerial = 0;
+    RgOpenXRFrameStateEXT xrFrameState{sizeof(RgOpenXRFrameStateEXT), RG_OPENXR_PRESENTATION_EXT_VERSION};
+    XrView locatedViews[2]{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
     RgOpenXRVirtualScreenSettingsEXT virtualScreenSettings{
         RG_STRUCTURE_TYPE_OPENXR_VIRTUAL_SCREEN_SETTINGS_EXT, nullptr, 2, RG_FALSE, 1.0f, 0.0f, 0.0f, 0, 0, 0
     };

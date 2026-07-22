@@ -194,6 +194,7 @@ typedef enum RgStructureType
     RG_STRUCTURE_TYPE_START_FRAME_FLUID_PARAMS              = 35,
     RG_STRUCTURE_TYPE_OPENXR_PRESENTATION_CREATE_INFO_EXT   = 36,
     RG_STRUCTURE_TYPE_OPENXR_VIRTUAL_SCREEN_SETTINGS_EXT    = 37,
+    RG_STRUCTURE_TYPE_OPENXR_PRESENTATION_SETTINGS_EXT      = 38,
 } RgStructureType;
 
 typedef enum RgTextureSwizzling
@@ -295,6 +296,15 @@ typedef struct RgOpenXRInputSnapshotEXT
     RgFloat2D virtualScreenSize;
     uint64_t virtualScreenRevision;
 } RgOpenXRInputSnapshotEXT;
+
+#define RG_OPENXR_PRESENTATION_EXT_VERSION 1u
+typedef enum RgOpenXRPresentationModeEXT { RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT = 0, RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT = 1 } RgOpenXRPresentationModeEXT;
+typedef enum RgOpenXRMirrorModeEXT { RG_OPENXR_MIRROR_MODE_LEFT_EYE_EXT = 0, RG_OPENXR_MIRROR_MODE_RIGHT_EYE_EXT = 1, RG_OPENXR_MIRROR_MODE_SIDE_BY_SIDE_EXT = 2, RG_OPENXR_MIRROR_MODE_OFF_EXT = 3 } RgOpenXRMirrorModeEXT;
+typedef enum RgOpenXRPresentationCapabilityBitsEXT { RG_OPENXR_PRESENTATION_CAPABILITY_NONE_EXT = 0, RG_OPENXR_PRESENTATION_CAPABILITY_VIRTUAL_SCREEN_EXT = 1u << 0, RG_OPENXR_PRESENTATION_CAPABILITY_STEREO_PROJECTION_EXT = 1u << 1, RG_OPENXR_PRESENTATION_CAPABILITY_MIRROR_EXT = 1u << 2 } RgOpenXRPresentationCapabilityBitsEXT;
+typedef enum RgOpenXRPresentationFallbackReasonEXT { RG_OPENXR_PRESENTATION_FALLBACK_NONE_EXT = 0, RG_OPENXR_PRESENTATION_FALLBACK_NOT_READY_EXT = 1, RG_OPENXR_PRESENTATION_FALLBACK_UNSUPPORTED_EXT = 2, RG_OPENXR_PRESENTATION_FALLBACK_INVALID_REQUEST_EXT = 3 } RgOpenXRPresentationFallbackReasonEXT;
+typedef struct RgOpenXRPresentationSettingsEXT { uint32_t structSize; uint32_t version; RgOpenXRPresentationModeEXT presentationMode; RgOpenXRMirrorModeEXT mirrorMode; float eyeRenderScale; float fovAdjustment; float eyeShiftMultiplier; uint64_t requestSerial; } RgOpenXRPresentationSettingsEXT;
+typedef struct RgOpenXREyeFrameStateEXT { RgOpenXRPoseEXT pose; float fieldOfView[4]; float projection[16]; } RgOpenXREyeFrameStateEXT;
+typedef struct RgOpenXRFrameStateEXT { uint32_t structSize; uint32_t version; uint32_t capabilities; RgBool32 sessionRunning; RgBool32 focused; RgBool32 frameValid; int64_t predictedDisplayTime; RgOpenXRPoseEXT headPose; RgOpenXREyeFrameStateEXT eyes[2]; RgOpenXRPresentationModeEXT requestedPresentationMode; RgOpenXRPresentationModeEXT activePresentationMode; RgOpenXRMirrorModeEXT requestedMirrorMode; RgOpenXRMirrorModeEXT activeMirrorMode; RgOpenXRPresentationFallbackReasonEXT fallbackReason; } RgOpenXRFrameStateEXT;
 
 typedef RgResult ( RGAPI_PTR* PFN_rgGetOpenXRInputSnapshotEXT )( RgOpenXRInputSnapshotEXT* pSnapshot );
 RGAPI RgResult RGAPI_CALL rgGetOpenXRInputSnapshotEXT( RgOpenXRInputSnapshotEXT* pSnapshot );
@@ -648,6 +658,8 @@ typedef struct RgSpawnFluidInfo
 } RgSpawnFluidInfo;
 typedef RgResult( RGAPI_PTR* PFN_rgSpawnFluid )( const RgSpawnFluidInfo* pInfo );
 typedef RgResult( RGAPI_PTR* PFN_rgSetOpenXRVirtualScreenSettingsEXT )( const RgOpenXRVirtualScreenSettingsEXT* pInfo );
+typedef RgResult( RGAPI_PTR* PFN_rgSetOpenXRPresentationSettingsEXT )( const RgOpenXRPresentationSettingsEXT* pInfo );
+typedef RgResult( RGAPI_PTR* PFN_rgGetOpenXRFrameStateEXT )( RgOpenXRFrameStateEXT* pState );
 
 
 
@@ -683,6 +695,14 @@ typedef struct RgCameraInfo
 } RgCameraInfo;
 
 typedef RgResult( RGAPI_PTR* PFN_rgUploadCamera )( const RgCameraInfo* pInfo );
+typedef struct RgStereoCameraInfoEXT
+{
+    uint32_t structSize;
+    uint32_t version;
+    RgCameraInfo left;
+    RgCameraInfo right;
+} RgStereoCameraInfoEXT;
+typedef RgResult( RGAPI_PTR* PFN_rgUploadStereoCameraEXT )( const RgStereoCameraInfoEXT* pInfo );
 
 
 
@@ -1355,6 +1375,9 @@ typedef struct RgInterface
     // Additional
     PFN_rgSpawnFluid                      rgSpawnFluid;
     PFN_rgSetOpenXRVirtualScreenSettingsEXT rgSetOpenXRVirtualScreenSettingsEXT;
+    PFN_rgSetOpenXRPresentationSettingsEXT rgSetOpenXRPresentationSettingsEXT;
+    PFN_rgGetOpenXRFrameStateEXT rgGetOpenXRFrameStateEXT;
+    PFN_rgUploadStereoCameraEXT            rgUploadStereoCameraEXT;
 } RgInterface;
 
 #if defined( _WIN32 )
@@ -1380,7 +1403,8 @@ inline RgResult rgLoadLibraryAndCreate( const RgInstanceCreateInfo* pInfo,
         return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
     }
 
-    if( pInfo->sizeOfRgInterface != sizeof( RgInterface ) )
+    // Interface sizes are versioned for forward/backward compatibility. The DLL copies only the common prefix.
+    if( pInfo->sizeOfRgInterface == 0 || pInfo->sizeOfRgInterface > sizeof( RgInterface ) )
     {
         return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
     }

@@ -94,6 +94,7 @@ public:
     void SpawnFluid( const RgSpawnFluidInfo* pInfo );
 
     void UploadCamera( const RgCameraInfo* pInfo );
+    RgResult UploadStereoCamera( const RgStereoCameraInfoEXT* pInfo );
 
     void UploadLight( const RgLightInfo* pInfo );
 
@@ -105,6 +106,8 @@ public:
     void DrawFrame( const RgDrawFrameInfo* pInfo );
     RgResult SetOpenXRVirtualScreenSettings( const RgOpenXRVirtualScreenSettingsEXT* pInfo );
     RgResult GetOpenXRInputSnapshotEXT( RgOpenXRInputSnapshotEXT* pSnapshot ) const;
+    RgResult SetOpenXRPresentationSettings( const RgOpenXRPresentationSettingsEXT* pInfo );
+    RgResult GetOpenXRFrameState( RgOpenXRFrameStateEXT* pState ) const;
 
 
     bool IsUpscaleTechniqueAvailable( RgRenderUpscaleTechnique technique,
@@ -178,6 +181,8 @@ private:
     std::shared_ptr< PhysicalDevice > physDevice;
 #if defined(RG_WITH_OPENXR)
     std::unique_ptr< OpenXRPresenter > openxr;
+    RgStereoCameraInfoEXT pendingStereoCamera{};
+    bool pendingStereoCameraValid = false;
 #endif
     std::shared_ptr< Queues >         queues;
     std::shared_ptr< Swapchain >      swapchain;

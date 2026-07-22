@@ -1363,6 +1363,31 @@ RgResult RTGL1::VulkanDevice::GetOpenXRInputSnapshotEXT(RgOpenXRInputSnapshotEXT
 #endif
     return RG_RESULT_SUCCESS;
 }
+RgResult RTGL1::VulkanDevice::UploadStereoCamera( const RgStereoCameraInfoEXT* pInfo )
+{
+    if( !pInfo || pInfo->structSize != sizeof(*pInfo) || pInfo->version != RG_OPENXR_PRESENTATION_EXT_VERSION ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
+    if( pInfo->left.sType != RG_STRUCTURE_TYPE_CAMERA_INFO || pInfo->right.sType != RG_STRUCTURE_TYPE_CAMERA_INFO ) return RG_RESULT_WRONG_STRUCTURE_TYPE;
+    pendingStereoCamera = *pInfo;
+    pendingStereoCameraValid = true;
+    return RG_RESULT_SUCCESS;
+}
+RgResult RTGL1::VulkanDevice::SetOpenXRPresentationSettings( const RgOpenXRPresentationSettingsEXT* pInfo )
+{
+    if( !pInfo || pInfo->structSize != sizeof(*pInfo) || pInfo->version != RG_OPENXR_PRESENTATION_EXT_VERSION ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
+#if defined(RG_WITH_OPENXR)
+    if( openxr ) return openxr->SetPresentationSettings(*pInfo);
+#endif
+    return RG_RESULT_SUCCESS;
+}
+RgResult RTGL1::VulkanDevice::GetOpenXRFrameState( RgOpenXRFrameStateEXT* pState ) const
+{
+    if( !pState || pState->structSize != sizeof(*pState) || pState->version != RG_OPENXR_PRESENTATION_EXT_VERSION ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
+#if defined(RG_WITH_OPENXR)
+    if( openxr ) return openxr->GetFrameState(*pState);
+#endif
+    *pState = {sizeof(*pState), RG_OPENXR_PRESENTATION_EXT_VERSION};
+    return RG_RESULT_SUCCESS;
+}
 void RTGL1::VulkanDevice::StartFrame( const RgStartFrameInfo* pOriginalInfo )
 {
     if( currentFrameState.WasFrameStarted() )

@@ -135,10 +135,15 @@ RgResult RGAPI_CALL rgSetOpenXRVirtualScreenSettingsEXT( const RgOpenXRVirtualSc
     return Call( [ & ]( Device& d ) { return d.SetOpenXRVirtualScreenSettings( pInfo ); } );
 }
 
+RgResult RGAPI_CALL rgSetOpenXRPresentationSettingsEXT( const RgOpenXRPresentationSettingsEXT* pInfo ) { return Call( [ & ]( Device& d ) { return d.SetOpenXRPresentationSettings( pInfo ); } ); }
+RgResult RGAPI_CALL rgGetOpenXRFrameStateEXT( RgOpenXRFrameStateEXT* pState ) { return Call( [ & ]( Device& d ) { return d.GetOpenXRFrameState( pState ); } ); }
+
 RgResult RGAPI_CALL rgUploadCamera( const RgCameraInfo* pInfo )
 {
     return Call( [ & ]( Device& d ) { d.UploadCamera( pInfo ); } );
 }
+
+RgResult RGAPI_CALL rgUploadStereoCameraEXT( const RgStereoCameraInfoEXT* pInfo ) { return Call( [ & ]( Device& d ) { return d.UploadStereoCamera( pInfo ); } ); }
 
 RgResult RGAPI_CALL rgUploadLight( const RgLightInfo* pInfo )
 {
@@ -371,6 +376,9 @@ RGAPI RgResult RGCONV RGAPI_CALL rgCreateInstance( const RgInstanceCreateInfo* p
             .rgUtilGetSupportedFeatures        = rgUtilGetSupportedFeatures,
             .rgSpawnFluid                      = rgSpawnFluid,
             .rgSetOpenXRVirtualScreenSettingsEXT = rgSetOpenXRVirtualScreenSettingsEXT,
+            .rgSetOpenXRPresentationSettingsEXT = rgSetOpenXRPresentationSettingsEXT,
+            .rgGetOpenXRFrameStateEXT = rgGetOpenXRFrameStateEXT,
+            .rgUploadStereoCameraEXT = rgUploadStereoCameraEXT,
         };
 
         // error if DLL has less functionality, otherwise, warning
