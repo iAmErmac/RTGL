@@ -167,6 +167,7 @@ private:
     uint64_t acceptedPresentationSerial = 0;
     RgOpenXRFrameStateEXT xrFrameState{sizeof(RgOpenXRFrameStateEXT), RG_OPENXR_PRESENTATION_EXT_VERSION};
     XrView locatedViews[2]{{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
+    XrFovf projectionFovs[2]{};
     RgOpenXRVirtualScreenSettingsEXT virtualScreenSettings{
         RG_STRUCTURE_TYPE_OPENXR_VIRTUAL_SCREEN_SETTINGS_EXT, nullptr, 2, RG_FALSE, 1.0f, 0.0f, 0.0f, 0, 0, 0
     };

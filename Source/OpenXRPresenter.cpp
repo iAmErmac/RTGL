@@ -886,10 +886,17 @@ bool OpenXRPresenter::BeginFrame()
             out.pose.valid = RG_TRUE;
             out.fieldOfView[0] = view.fov.angleLeft; out.fieldOfView[1] = view.fov.angleRight; out.fieldOfView[2] = view.fov.angleUp; out.fieldOfView[3] = view.fov.angleDown;
             const float fovAdjustment = std::clamp(requestedPresentationSettings.fovAdjustment * 0.01745329252f, -0.5f, 0.5f);
-            const float l = std::tan(std::clamp(view.fov.angleLeft - fovAdjustment, -1.569f, 1.569f));
-            const float r = std::tan(std::clamp(view.fov.angleRight + fovAdjustment, -1.569f, 1.569f));
-            const float u = std::tan(std::clamp(view.fov.angleUp + fovAdjustment, -1.569f, 1.569f));
-            const float d = std::tan(std::clamp(view.fov.angleDown - fovAdjustment, -1.569f, 1.569f));
+            const XrFovf adjustedFov = {
+                std::clamp(view.fov.angleLeft - fovAdjustment, -1.569f, 1.569f),
+                std::clamp(view.fov.angleRight + fovAdjustment, -1.569f, 1.569f),
+                std::clamp(view.fov.angleUp + fovAdjustment, -1.569f, 1.569f),
+                std::clamp(view.fov.angleDown - fovAdjustment, -1.569f, 1.569f),
+            };
+            projectionFovs[ eye ] = adjustedFov;
+            const float l = std::tan(adjustedFov.angleLeft);
+            const float r = std::tan(adjustedFov.angleRight);
+            const float u = std::tan(adjustedFov.angleUp);
+            const float d = std::tan(adjustedFov.angleDown);
             const float n = 0.01f, f = 1000.0f;
             std::fill(std::begin(out.projection), std::end(out.projection), 0.0f);
             out.projection[0] = 2.0f / (r - l); out.projection[5] = -2.0f / (u - d); out.projection[8] = (r + l) / (r - l); out.projection[9] = -(u + d) / (u - d); out.projection[10] = f / (n - f); out.projection[11] = -1.0f; out.projection[14] = (f * n) / (n - f);
@@ -1021,20 +1028,15 @@ void OpenXRPresenter::RecordStereoEyeBlit(VkCommandBuffer cmd, uint32_t eyeIndex
         projectionSwapchainImageLayouts[ eyeIndex ], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, dstRange };
     vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers );
-    const float sourceAspect = float( sourceExtent.width ) / float( sourceExtent.height );
-    const float targetAspect = float( projectionExtent.width ) / float( projectionExtent.height );
-    const int32_t targetWidth = targetAspect > sourceAspect ? int32_t( std::lround( float( projectionExtent.height ) * sourceAspect ) ) : int32_t( projectionExtent.width );
-    const int32_t targetHeight = targetAspect > sourceAspect ? int32_t( projectionExtent.height ) : int32_t( std::lround( float( projectionExtent.width ) / sourceAspect ) );
-    const int32_t targetX = ( int32_t( projectionExtent.width ) - targetWidth ) / 2;
-    const int32_t targetY = ( int32_t( projectionExtent.height ) - targetHeight ) / 2;
+
     const VkClearColorValue black{};
     vkCmdClearColorImage( cmd, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &dstRange );
     VkImageBlit region{};
     region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
     region.srcOffsets[ 1 ] = { int32_t( sourceExtent.width ), int32_t( sourceExtent.height ), 1 };
     region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, eyeIndex, 1 };
-    region.dstOffsets[ 0 ] = { targetX, targetY, 0 };
-    region.dstOffsets[ 1 ] = { targetX + targetWidth, targetY + targetHeight, 1 };
+    region.dstOffsets[ 0 ] = { 0, 0, 0 };
+    region.dstOffsets[ 1 ] = { int32_t( projectionExtent.width ), int32_t( projectionExtent.height ), 1 };
     vkCmdBlitImage( cmd, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR );
     barriers[ 0 ].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; barriers[ 0 ].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     barriers[ 0 ].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; barriers[ 0 ].newLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -1045,7 +1047,7 @@ void OpenXRPresenter::RecordStereoEyeBlit(VkCommandBuffer cmd, uint32_t eyeIndex
     if( eyeIndex == 1 )
     {
         projectionLayer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION }; projectionLayer.space = space; projectionLayer.viewCount = 2; projectionLayer.views = projectionViews;
-        for( uint32_t eye = 0; eye < 2; ++eye ) { projectionViews[ eye ] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }; projectionViews[ eye ].pose = locatedViews[ eye ].pose; projectionViews[ eye ].fov = locatedViews[ eye ].fov; projectionViews[ eye ].subImage.swapchain = projectionSwapchain; projectionViews[ eye ].subImage.imageArrayIndex = eye; projectionViews[ eye ].subImage.imageRect = {{ 0, 0 }, { int32_t( projectionExtent.width ), int32_t( projectionExtent.height ) }}; }
+        for( uint32_t eye = 0; eye < 2; ++eye ) { projectionViews[ eye ] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }; projectionViews[ eye ].pose = locatedViews[ eye ].pose; projectionViews[ eye ].fov = projectionFovs[ eye ]; projectionViews[ eye ].subImage.swapchain = projectionSwapchain; projectionViews[ eye ].subImage.imageArrayIndex = eye; projectionViews[ eye ].subImage.imageRect = {{ 0, 0 }, { int32_t( projectionExtent.width ), int32_t( projectionExtent.height ) }}; }
         projectionSubmitted = true;
     }
 }

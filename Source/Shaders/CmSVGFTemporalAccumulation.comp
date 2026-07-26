@@ -57,10 +57,8 @@ layout(local_size_x = COMPUTE_SVGF_TEMPORAL_GROUP_SIZE_X, local_size_y = COMPUTE
 // Ray Tracing Gems II. Chapter 49: ReBLUR: A Hierarchical Recurrent Denoiser
 float getParallax(vec3 pos, vec3 posPrev)
 {
-    vec3 cameraDelta = globalUniform.cameraPositionPrev.xyz - globalUniform.cameraPosition.xyz;
-
-    vec3 v = normalize(pos);
-    vec3 vPrev = normalize(posPrev - cameraDelta);
+    vec3 v = normalize(pos - globalUniform.cameraPosition.xyz);
+    vec3 vPrev = normalize(posPrev - globalUniform.cameraPositionPrev.xyz);
     float cosa = saturate(dot(v, vPrev));
     float parallax = sqrt(1.0 - cosa * cosa) / max(cosa, 1e-6);
     parallax *= 60; // optionally normalized to 60 FPS
@@ -109,7 +107,13 @@ void main()
     const vec4 unfilteredRayInfo= texelFetch(framebufViewDirection_Sampler, pix, 0);
 
     const ivec3 chRenderArea    = getCheckerboardedRenderArea(              pix);
-    const float motionZ         = texelFetch(framebufMotion_Sampler,        pix, 0).z;
+    const vec3 motion           = texelFetch(framebufMotion_Sampler,        pix, 0).xyz;
+    const float motionZ         = motion.z;
+    const float motionPixels    = length(motion.xy * vec2(globalUniform.renderWidth, globalUniform.renderHeight));
+    // Long history is stable when the surface barely moves, but stale samples
+    // make high-frequency dark detail trail during head motion. Limit only the
+    // affected pixel's history; stationary pixels retain the normal limit.
+    const float motionHistoryLimit = mix(256.0, 4.0, smoothstep(0.75, 6.0, motionPixels));
     const float depth           = texelFetch(framebufDepthWorld_Sampler,    pix, 0).r;
     const vec3 normal           = texelFetchNormal(                         pix);
     const float roughness       = texelFetch(framebufMetallicRoughness_Sampler, pix, 0).g;
@@ -207,7 +211,7 @@ void main()
         const float A = clamp(
             1.0 + specHistoryLength * pow(1.0 - antilagAlpha_Spec, 5), 
             SPEC_MIN_ACCUM_FRAMES, 
-            SPEC_MAX_ACCUM_FRAMES);
+            min(SPEC_MAX_ACCUM_FRAMES, motionHistoryLimit));
 
         const float parallax = getParallax(surfPos, surfPosPrev);
         float AOnSurf = getSpecAccumSpeed(A, roughness, nv, parallax);
@@ -332,7 +336,7 @@ void main()
         // direct diffuse
         {
             diffHistoryLength *= pow(1.0 - antilagAlpha_Diff, 10);
-            diffHistoryLength = clamp(diffHistoryLength + 1.0, 1.0, 256.0);
+            diffHistoryLength = clamp(diffHistoryLength + 1.0, 1.0, motionHistoryLimit);
 
             const float minAlpha = 0.01;
             float alphaColor   = max(minAlpha, 1.0 / diffHistoryLength);
@@ -349,7 +353,7 @@ void main()
         // indirect diffuse
         {
             indirHistoryLength *= pow(1.0 - antilagAlpha_Indir, 10);
-            indirHistoryLength = clamp(indirHistoryLength + 1.0, 1.0, 256.0);
+            indirHistoryLength = clamp(indirHistoryLength + 1.0, 1.0, motionHistoryLimit);
 
             const float minAlpha = 0.01;
             float alphaColor = max(minAlpha, 1.0 / indirHistoryLength);

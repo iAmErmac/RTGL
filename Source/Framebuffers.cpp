@@ -236,6 +236,7 @@ bool Framebuffers::UsesStereoEyeStorage( FramebufferImageIndex framebufferImageI
 {
     const uint32_t index = static_cast< uint32_t >( framebufferImageIndex );
     return index <= FB_IMAGE_INDEX_REACTIVITY ||
+           ( index >= FB_IMAGE_INDEX_SCREEN_EMIS_R_T && index <= FB_IMAGE_INDEX_SCREEN_EMISSION ) ||
            ( index >= FB_IMAGE_INDEX_ACCUM_HISTORY_LENGTH && index <= FB_IMAGE_INDEX_SCATTERING_HISTORY_PREV ) ||
            index >= FB_IMAGE_INDEX_RESERVOIRS;
 }

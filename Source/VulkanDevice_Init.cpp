@@ -620,6 +620,8 @@ RTGL1::VulkanDevice::~VulkanDevice()
     effectHDRPrepare.reset();
     denoiser.reset();
     uniform.reset();
+    // These own Vulkan descriptor pools too; release them before vkDestroyDevice().
+    stereoUniforms = {};
     scene.reset();
     sceneImportExport.reset();
     shaderManager.reset();
