@@ -1142,7 +1142,10 @@ auto RTGL1::VulkanDevice::RenderEye( VkCommandBuffer& cmd, const RgDrawFrameInfo
                                          renderResolution.UpscaledHeight(),
                                          swapchain->IsHDREnabled() );
 
-            if( !openxr )
+            // DX12 may exist for an optional frame-generation path even when
+            // the DXGI swapchain (and its shared framebuffer images) is off.
+            // Only copy HUD_ONLY through DX12 when those shared images exist.
+            if( !openxr && dxgi::Framebuf_HasSharedImages() )
             {
                 FramebufferImageIndex todx12[] = { FB_IMAGE_INDEX_HUD_ONLY };
                 Framebuf_CopyVkToDX12( cmd, frameIndex, *framebuffers, renderResolution.UpscaledWidth(), renderResolution.UpscaledHeight(), todx12 );
