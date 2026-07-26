@@ -50,7 +50,7 @@
 /// Defines the number of internal effect contexts required by FSR2
 ///
 /// @ingroup ffxFsr2
-#define FFX_FSR2_CONTEXT_COUNT   1
+#define FFX_FSR2_CONTEXT_COUNT   2
 
 /// The size of the context specified in 32bit values.
 ///

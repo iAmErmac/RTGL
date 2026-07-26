@@ -668,7 +668,7 @@ auto RTGL1::VulkanDevice::RenderEye( VkCommandBuffer& cmd, const RgDrawFrameInfo
 
     assert( eyeIndex < eyeRenderStates.size() );
     auto& eyeState = eyeRenderStates[ eyeIndex ];
-    const bool resetHistory = drawInfo.resetHistory || !eyeState.cameraValid || stereoRender;
+    const bool resetHistory = drawInfo.resetHistory || !eyeState.cameraValid;
     if( eyeState.cameraValid )
     {
         eyeState.previousView = eyeState.view;

@@ -213,15 +213,18 @@ RTGL1::FSR2::FSR2( VkDevice _device, VkPhysicalDevice _physDevice )
 
 RTGL1::FSR2::~FSR2()
 {
-    if( m_context )
+    for( FfxFsr2Context*& context : m_context )
     {
-        pfn.ffxFsr2ContextDestroy( m_context );
-        delete m_context;
+        if( context )
+        {
+            pfn.ffxFsr2ContextDestroy( context );
+            delete context;
+            context = nullptr;
+        }
     }
 
     FreeDlls( m_loadedDlls );
 }
-
 bool RTGL1::FSR2::Valid() const
 {
     return !m_loadedDlls.empty();
@@ -240,18 +243,20 @@ auto RTGL1::FSR2::MakeInstance( VkDevice device, VkPhysicalDevice physDevice )
 
 void RTGL1::FSR2::OnFramebuffersSizeChange( const ResolutionState& resolutionState )
 {
-    if( m_context )
+    for( FfxFsr2Context*& context : m_context )
     {
-        pfn.ffxFsr2ContextDestroy( m_context );
-        *m_context = {};
-    }
-    else
-    {
-        m_context = new FfxFsr2Context{};
+        if( context )
+        {
+            pfn.ffxFsr2ContextDestroy( context );
+            *context = {};
+        }
+        else
+        {
+            context = new FfxFsr2Context{};
+        }
     }
 
     FfxErrorCode r{};
-
     auto contextDesc = FfxFsr2ContextDescription{
         .flags = FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE |
                  ( LibConfig().fsrValidation ? FFX_FSR2_ENABLE_DEBUG_CHECKING : 0u ),
@@ -271,7 +276,6 @@ void RTGL1::FSR2::OnFramebuffersSizeChange( const ResolutionState& resolutionSta
         physDevice,
         vkGetDeviceProcAddr,
     };
-
     r = pfn.ffxGetInterfaceVK( &contextDesc.backendInterface,
                                pfn.ffxGetDeviceVK( &contextDevice ),
                                m_scratchBuffer.data(),
@@ -279,10 +283,12 @@ void RTGL1::FSR2::OnFramebuffersSizeChange( const ResolutionState& resolutionSta
                                FFX_FSR2_CONTEXT_COUNT );
     CheckError( r );
 
-    r = pfn.ffxFsr2ContextCreate( m_context, &contextDesc );
-    CheckError( r );
+    for( FfxFsr2Context* context : m_context )
+    {
+        r = pfn.ffxFsr2ContextCreate( context, &contextDesc );
+        CheckError( r );
+    }
 }
-
 namespace
 {
 constexpr RTGL1::FramebufferImageIndex OUTPUT_IMAGE_INDEX = RTGL1::FB_IMAGE_INDEX_UPSCALED_PONG;
@@ -387,6 +393,10 @@ RTGL1::FramebufferImageIndex RTGL1::FSR2::Apply( VkCommandBuffer               c
 {
     assert( nearPlane > 0.0f && nearPlane < farPlane );
 
+    const uint32_t eyeIndex = framebuffers.GetActiveEye();
+    FfxFsr2Context* context = m_context[ eyeIndex ];
+    assert( context );
+
     using FI = FramebufferImageIndex;
 
     FI rs[] = {
@@ -398,13 +408,13 @@ RTGL1::FramebufferImageIndex RTGL1::FSR2::Apply( VkCommandBuffer               c
     // clang-format off
     FfxFsr2DispatchDescription info = {
         .commandList                = pfn.ffxGetCommandListVK( cmd ),
-        .color                      = ToFSRResource( FI::FB_IMAGE_INDEX_FINAL, frameIndex, m_context, framebuffers, renderResolution.GetResolutionState() ),
-        .depth                      = ToFSRResource( FI::FB_IMAGE_INDEX_DEPTH_NDC, frameIndex, m_context, framebuffers, renderResolution.GetResolutionState() ),
-        .motionVectors              = ToFSRResource( FI::FB_IMAGE_INDEX_MOTION_DLSS, frameIndex, m_context, framebuffers, renderResolution.GetResolutionState() ),
+        .color                      = ToFSRResource( FI::FB_IMAGE_INDEX_FINAL, frameIndex, context, framebuffers, renderResolution.GetResolutionState() ),
+        .depth                      = ToFSRResource( FI::FB_IMAGE_INDEX_DEPTH_NDC, frameIndex, context, framebuffers, renderResolution.GetResolutionState() ),
+        .motionVectors              = ToFSRResource( FI::FB_IMAGE_INDEX_MOTION_DLSS, frameIndex, context, framebuffers, renderResolution.GetResolutionState() ),
         .exposure                   = {},
-        .reactive                   = ToFSRResource( FI::FB_IMAGE_INDEX_REACTIVITY, frameIndex, m_context, framebuffers, renderResolution.GetResolutionState() ),
+        .reactive                   = ToFSRResource( FI::FB_IMAGE_INDEX_REACTIVITY, frameIndex, context, framebuffers, renderResolution.GetResolutionState() ),
         .transparencyAndComposition = {},
-        .output                     = ToFSRResource( OUTPUT_IMAGE_INDEX, frameIndex, m_context, framebuffers, renderResolution.GetResolutionState() ),
+        .output                     = ToFSRResource( OUTPUT_IMAGE_INDEX, frameIndex, context, framebuffers, renderResolution.GetResolutionState() ),
         .jitterOffset               = { -jitterOffset.data[ 0 ], -jitterOffset.data[ 1 ] },
         .motionVectorScale          = { float( renderResolution.GetResolutionState().renderWidth ), float( renderResolution.GetResolutionState().renderHeight ) },
         .renderSize                 = { renderResolution.GetResolutionState().renderWidth, renderResolution.GetResolutionState().renderHeight },
@@ -426,7 +436,7 @@ RTGL1::FramebufferImageIndex RTGL1::FSR2::Apply( VkCommandBuffer               c
     };
     // clang-format on
 
-    FfxErrorCode r = pfn.ffxFsr2ContextDispatch( m_context, &info );
+    FfxErrorCode r = pfn.ffxFsr2ContextDispatch( context, &info );
     CheckError( r );
 
     InsertBarriers( cmd, frameIndex, framebuffers, rs, true );

@@ -235,7 +235,7 @@ uint32_t Framebuffers::GetActiveEye() const
 bool Framebuffers::UsesStereoEyeStorage( FramebufferImageIndex framebufferImageIndex )
 {
     const uint32_t index = static_cast< uint32_t >( framebufferImageIndex );
-    return index <= FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR ||
+    return index <= FB_IMAGE_INDEX_REACTIVITY ||
            ( index >= FB_IMAGE_INDEX_ACCUM_HISTORY_LENGTH && index <= FB_IMAGE_INDEX_SCATTERING_HISTORY_PREV ) ||
            index >= FB_IMAGE_INDEX_RESERVOIRS;
 }
@@ -629,8 +629,10 @@ std::tuple< VkImage, VkImageView, VkFormat > RTGL1::Framebuffers::GetImageHandle
 {
     fbImageIndex = FrameIndexToFBIndex( fbImageIndex, frameIndex );
 
-    return std::make_tuple( images[ fbImageIndex ],
-                            imageViews[ fbImageIndex ],
+    const size_t storageIndex = GetStorageIndex( fbImageIndex );
+
+    return std::make_tuple( images[ storageIndex ],
+                            imageViews[ storageIndex ],
                             ShFramebuffers_Formats[ fbImageIndex ] );
 }
 

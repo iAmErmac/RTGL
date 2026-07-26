@@ -67,7 +67,7 @@ private:
     VkDevice         device;
     VkPhysicalDevice physDevice;
 
-    FfxFsr2Context*        m_context{};
+    FfxFsr2Context*        m_context[ FRAMEBUFFERS_EYE_COUNT ]{};
     std::vector< uint8_t > m_scratchBuffer{};
 
     std::vector< void* > m_loadedDlls{};
