@@ -39,7 +39,13 @@ RTGL1::RestirBuffers::~RestirBuffers()
 
 VkDescriptorSet RTGL1::RestirBuffers::GetDescSet( uint32_t frameIndex ) const
 {
-    return descSets[ frameIndex ];
+    return descSets[ activeEye ][ frameIndex ];
+}
+
+void RTGL1::RestirBuffers::SetActiveEye( uint32_t eyeIndex )
+{
+    assert( eyeIndex < EYE_COUNT );
+    activeEye = eyeIndex;
 }
 
 VkDescriptorSetLayout RTGL1::RestirBuffers::GetDescSetLayout() const
@@ -89,41 +95,30 @@ auto MakeBuffer( const std::shared_ptr< RTGL1::MemoryAllocator >& allocator,
 
 void RTGL1::RestirBuffers::CreateBuffers( uint32_t renderWidth, uint32_t renderHeight )
 {
-    for( auto& r : reservoirs )
+    for( auto& eyeReservoirs : reservoirs )
     {
-        r = MakeBuffer( allocator,
-                        sizeof( uint32_t ) * PACKED_INDIRECT_RESERVOIR_SIZE_IN_WORDS * renderWidth *
-                            renderHeight,
-                        "Restir Indirect - Reservois" );
+        for( auto& reservoir : eyeReservoirs )
+        {
+            reservoir = MakeBuffer( allocator,
+                                    sizeof( uint32_t ) * PACKED_INDIRECT_RESERVOIR_SIZE_IN_WORDS *
+                                        renderWidth * renderHeight,
+                                    "Restir Indirect - Reservoirs" );
+        }
     }
-
     UpdateDescriptors();
 }
-
 void RTGL1::RestirBuffers::DestroyBuffers()
 {
-    BufferDef* allBufs[] = {
-        &reservoirs[ 0 ],
-        &reservoirs[ 1 ],
-    };
-    static_assert( sizeof( reservoirs ) / sizeof( reservoirs[ 0 ] ) == 2 );
-
-    for( auto* b : allBufs )
+    for( auto& eyeReservoirs : reservoirs )
     {
-        if( b->buffer )
+        for( auto& reservoir : eyeReservoirs )
         {
-            vkDestroyBuffer( device, b->buffer, nullptr );
+            if( reservoir.buffer ) vkDestroyBuffer( device, reservoir.buffer, nullptr );
+            if( reservoir.memory ) MemoryAllocator::FreeDedicated( device, reservoir.memory );
+            reservoir = {};
         }
-
-        if( b->memory )
-        {
-            MemoryAllocator::FreeDedicated( device, b->memory );
-        }
-
-        *b = {};
     }
 }
-
 void RTGL1::RestirBuffers::CreateDescriptors()
 {
     VkResult                     r;
@@ -160,13 +155,13 @@ void RTGL1::RestirBuffers::CreateDescriptors()
                     "Restir Indirect Desc set layout" );
 
     VkDescriptorPoolSize poolSize = {
-        .type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = std::size( bindings ) * MAX_FRAMES_IN_FLIGHT,
+        .type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = std::size( bindings ) * MAX_FRAMES_IN_FLIGHT * EYE_COUNT,
     };
 
     VkDescriptorPoolCreateInfo poolInfo = {
         .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets       = MAX_FRAMES_IN_FLIGHT,
+        .maxSets       = MAX_FRAMES_IN_FLIGHT * EYE_COUNT,
         .poolSizeCount = 1,
         .pPoolSizes    = &poolSize,
     };
@@ -176,8 +171,10 @@ void RTGL1::RestirBuffers::CreateDescriptors()
 
     SET_DEBUG_NAME( device, descPool, VK_OBJECT_TYPE_DESCRIPTOR_POOL, "Restir Indirect Desc pool" );
 
-    for( auto& d : descSets )
+    for( auto& eyeDescSets : descSets )
     {
+        for( auto& d : eyeDescSets )
+        {
         VkDescriptorSetAllocateInfo allocInfo = {
             .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .descriptorPool     = descPool,
@@ -189,45 +186,40 @@ void RTGL1::RestirBuffers::CreateDescriptors()
         VK_CHECKERROR( r );
 
         SET_DEBUG_NAME( device, d, VK_OBJECT_TYPE_DESCRIPTOR_SET, "Restir Indirect Desc set" );
+        }
     }
 }
 
 void RTGL1::RestirBuffers::UpdateDescriptors()
 {
-    for( uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++ )
+    for( uint32_t eye = 0; eye < EYE_COUNT; eye++ )
     {
-        VkBuffer bufs[] = {
-            reservoirs[ i ].buffer,
-            reservoirs[ Utils::GetPreviousByModulo( i, MAX_FRAMES_IN_FLIGHT ) ].buffer,
-        };
-        uint32_t bnds[] = {
-            BINDING_RESTIR_INDIRECT_RESERVOIRS,
-            BINDING_RESTIR_INDIRECT_RESERVOIRS_PREV,
-        };
-        static_assert( std::size( bufs ) == std::size( bnds ) );
-
-        VkDescriptorBufferInfo bufInfo[ std::size( bufs ) ] = {};
-        VkWriteDescriptorSet   wrts[ std::size( bufs ) ]    = {};
-
-        for( int k = 0; k < static_cast< int >( std::size( bufs ) ); k++ )
+        for( uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++ )
         {
-            bufInfo[ k ] = {
-                .buffer = bufs[ k ],
-                .offset = 0,
-                .range  = VK_WHOLE_SIZE,
+            VkBuffer bufs[] = {
+                reservoirs[ eye ][ i ].buffer,
+                reservoirs[ eye ][ Utils::GetPreviousByModulo( i, MAX_FRAMES_IN_FLIGHT ) ].buffer,
             };
-
-            wrts[ k ] = {
-                .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet          = descSets[ i ],
-                .dstBinding      = bnds[ k ],
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .pBufferInfo     = &bufInfo[ k ],
+            const uint32_t bnds[] = {
+                BINDING_RESTIR_INDIRECT_RESERVOIRS,
+                BINDING_RESTIR_INDIRECT_RESERVOIRS_PREV,
             };
+            VkDescriptorBufferInfo bufInfo[ std::size( bufs ) ] = {};
+            VkWriteDescriptorSet wrts[ std::size( bufs ) ] = {};
+            for( uint32_t k = 0; k < std::size( bufs ); k++ )
+            {
+                bufInfo[ k ] = { .buffer = bufs[ k ], .offset = 0, .range = VK_WHOLE_SIZE };
+                wrts[ k ] = {
+                    .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet          = descSets[ eye ][ i ],
+                    .dstBinding      = bnds[ k ],
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    .pBufferInfo     = &bufInfo[ k ],
+                };
+            }
+            vkUpdateDescriptorSets( device, std::size( wrts ), wrts, 0, nullptr );
         }
-
-        vkUpdateDescriptorSets( device, std::size( wrts ), wrts, 0, nullptr );
     }
 }

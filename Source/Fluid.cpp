@@ -293,6 +293,11 @@ bool RTGL1::Fluid::Active() const
     return m_active.length() > 0 || !m_sourcesCached.empty();
 }
 
+void RTGL1::Fluid::SetActiveEye( uint32_t eyeIndex )
+{
+    assert( eyeIndex < FRAMEBUFFERS_EYE_COUNT );
+    m_activeEye = eyeIndex;
+}
 void RTGL1::Fluid::Simulate( VkCommandBuffer  cmd,
                              uint32_t         frameIndex,
                              VkDescriptorSet  tlasDescSet,
@@ -498,7 +503,7 @@ void RTGL1::Fluid::Visualize( VkCommandBuffer               cmd,
         .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .pNext           = nullptr,
         .renderPass      = m_renderPass,
-        .framebuffer     = m_passFramebuffer,
+        .framebuffer     = m_passFramebuffer[ m_activeEye ],
         .renderArea      = renderArea,
         .clearValueCount = std::size( clears ),
         .pClearValues    = std::data( clears ),
@@ -1140,92 +1145,65 @@ void RTGL1::Fluid::CreateFramebuffers( uint32_t width, uint32_t height )
         .layerCount     = 1,
     };
 
+    const uint32_t previousEye = m_storageFramebuffer->GetActiveEye();
+    for( uint32_t eye = 0; eye < FRAMEBUFFERS_EYE_COUNT; eye++ )
     {
+        m_storageFramebuffer->SetActiveEye( eye );
+        AliasedDef& depth = m_depth[ eye ];
+
         VkCommandBuffer cmd = m_cmdManager->StartGraphicsCmd();
+        assert( !depth.image && !depth.view );
+        auto [ format, mem ] = m_storageFramebuffer->GetImageForAlias( FB_IMAGE_INDEX_DEPTH_FLUID, 0 );
 
-        assert( !m_depth.image && !m_depth.view );
-        assert( m_storageFramebuffer->GetImageView( FB_IMAGE_INDEX_DEPTH_FLUID, 0 ) ==
-                m_storageFramebuffer->GetImageView( FB_IMAGE_INDEX_DEPTH_FLUID, 1 ) );
+        const auto imageInfo = VkImageCreateInfo{
+            .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType     = VK_IMAGE_TYPE_2D,
+            .format        = RASTER_PASS_DEPTH_FORMAT,
+            .extent        = VkExtent3D{ .width = width, .height = height, .depth = 1 },
+            .mipLevels     = 1,
+            .arrayLayers   = 1,
+            .samples       = VK_SAMPLE_COUNT_1_BIT,
+            .tiling        = VK_IMAGE_TILING_OPTIMAL,
+            .usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        };
+        VkResult r = vkCreateImage( m_device, &imageInfo, nullptr, &depth.image );
+        VK_CHECKERROR( r );
+        SET_DEBUG_NAME( m_device, depth.image, VK_OBJECT_TYPE_IMAGE, "DepthFluid - Aliased image for raster pass" );
 
-        auto [ format, mem ] =
-            m_storageFramebuffer->GetImageForAlias( FB_IMAGE_INDEX_DEPTH_FLUID, //
-                                                    0 );
+        assert( format == VK_FORMAT_R32_SFLOAT && RASTER_PASS_DEPTH_FORMAT == VK_FORMAT_D32_SFLOAT );
+        r = vkBindImageMemory( m_device, depth.image, mem, 0 );
+        VK_CHECKERROR( r );
 
-        // assuming that width, height match!
-        {
-            const auto info = VkImageCreateInfo{
-                .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType     = VK_IMAGE_TYPE_2D,
-                .format        = RASTER_PASS_DEPTH_FORMAT,
-                .extent        = VkExtent3D{ .width = width, .height = height, .depth = 1 },
-                .mipLevels     = 1,
-                .arrayLayers   = 1,
-                .samples       = VK_SAMPLE_COUNT_1_BIT,
-                .tiling        = VK_IMAGE_TILING_OPTIMAL,
-                .usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            };
+        const auto viewInfo = VkImageViewCreateInfo{
+            .sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image            = depth.image,
+            .viewType         = VK_IMAGE_VIEW_TYPE_2D,
+            .format           = RASTER_PASS_DEPTH_FORMAT,
+            .subresourceRange = depthSubres,
+        };
+        r = vkCreateImageView( m_device, &viewInfo, nullptr, &depth.view );
+        VK_CHECKERROR( r );
+        SET_DEBUG_NAME( m_device, depth.view, VK_OBJECT_TYPE_IMAGE_VIEW, "DepthFluid - Aliased view for raster pass" );
 
-            VkResult r = vkCreateImage( m_device, &info, nullptr, &m_depth.image );
-            VK_CHECKERROR( r );
-
-            SET_DEBUG_NAME( m_device,
-                            m_depth.image,
-                            VK_OBJECT_TYPE_IMAGE,
-                            "DepthFluid - Aliased image for raster pass" );
-        }
-        // alias already allocated float32 memory
-        {
-            assert( format == VK_FORMAT_R32_SFLOAT &&
-                    RASTER_PASS_DEPTH_FORMAT == VK_FORMAT_D32_SFLOAT );
-
-            VkResult r = vkBindImageMemory( m_device, m_depth.image, mem, 0 );
-            VK_CHECKERROR( r );
-        }
-        {
-            const auto viewInfo = VkImageViewCreateInfo{
-                .sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image            = m_depth.image,
-                .viewType         = VK_IMAGE_VIEW_TYPE_2D,
-                .format           = RASTER_PASS_DEPTH_FORMAT,
-                .subresourceRange = depthSubres,
-            };
-
-            VkResult r = vkCreateImageView( m_device, &viewInfo, nullptr, &m_depth.view );
-            VK_CHECKERROR( r );
-
-            SET_DEBUG_NAME( m_device,
-                            m_depth.view,
-                            VK_OBJECT_TYPE_IMAGE_VIEW,
-                            "DepthFluid - Aliased view for raster pass" );
-        }
-
-        // to general layout
         Utils::BarrierImage( cmd,
-                             m_depth.image,
+                             depth.image,
                              0,
                              VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
                                  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
                              VK_IMAGE_LAYOUT_UNDEFINED,
                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                              depthSubres );
-
         m_cmdManager->Submit( cmd );
         m_cmdManager->WaitGraphicsIdle();
-    }
 
-    {
-        assert( m_passFramebuffer == VK_NULL_HANDLE );
+        assert( m_passFramebuffer[ eye ] == VK_NULL_HANDLE );
         assert( m_renderPass != VK_NULL_HANDLE );
-        assert( m_storageFramebuffer->GetImageView( FB_IMAGE_INDEX_FLUID_NORMAL, 0 ) ==
-                m_storageFramebuffer->GetImageView( FB_IMAGE_INDEX_FLUID_NORMAL, 1 ) );
-
         VkImageView vs[] = {
             m_storageFramebuffer->GetImageView( FB_IMAGE_INDEX_FLUID_NORMAL, 0 ),
-            m_depth.view,
+            depth.view,
         };
-
-        VkFramebufferCreateInfo info = {
+        const VkFramebufferCreateInfo framebufferInfo = {
             .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .renderPass      = m_renderPass,
             .attachmentCount = std::size( vs ),
@@ -1234,29 +1212,31 @@ void RTGL1::Fluid::CreateFramebuffers( uint32_t width, uint32_t height )
             .height          = height,
             .layers          = 1,
         };
-
-        VkResult r = vkCreateFramebuffer( m_device, &info, nullptr, &m_passFramebuffer );
+        r = vkCreateFramebuffer( m_device, &framebufferInfo, nullptr, &m_passFramebuffer[ eye ] );
         VK_CHECKERROR( r );
     }
+    m_storageFramebuffer->SetActiveEye( previousEye );
 }
 
 void RTGL1::Fluid::DestroyFramebuffers()
 {
-    if( m_depth.view != VK_NULL_HANDLE )
+    for( uint32_t eye = 0; eye < FRAMEBUFFERS_EYE_COUNT; eye++ )
     {
-        vkDestroyImageView( m_device, m_depth.view, nullptr );
-        vkDestroyImage( m_device, m_depth.image, nullptr );
-        m_depth.view  = VK_NULL_HANDLE;
-        m_depth.image = VK_NULL_HANDLE;
-    }
-
-    if( m_passFramebuffer != VK_NULL_HANDLE )
-    {
-        vkDestroyFramebuffer( m_device, m_passFramebuffer, nullptr );
-        m_passFramebuffer = VK_NULL_HANDLE;
+        AliasedDef& depth = m_depth[ eye ];
+        if( depth.view != VK_NULL_HANDLE )
+        {
+            vkDestroyImageView( m_device, depth.view, nullptr );
+            vkDestroyImage( m_device, depth.image, nullptr );
+            depth.view  = VK_NULL_HANDLE;
+            depth.image = VK_NULL_HANDLE;
+        }
+        if( m_passFramebuffer[ eye ] != VK_NULL_HANDLE )
+        {
+            vkDestroyFramebuffer( m_device, m_passFramebuffer[ eye ], nullptr );
+            m_passFramebuffer[ eye ] = VK_NULL_HANDLE;
+        }
     }
 }
-
 void RTGL1::Fluid::DestroyPipelines()
 {
     vkDestroyPipeline( m_device, m_particlesPipeline, nullptr );

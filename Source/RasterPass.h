@@ -43,6 +43,8 @@ public:
     RasterPass& operator=( const RasterPass& other )     = delete;
     RasterPass& operator=( RasterPass&& other ) noexcept = delete;
 
+    void SetActiveEye( uint32_t eyeIndex );
+
     void PrepareForFinal( VkCommandBuffer     cmd,
                           uint32_t            frameIndex,
                           const Framebuffers& storageFramebuffers,
@@ -106,16 +108,18 @@ private:
     std::shared_ptr< RasterizerPipelines > classicPipelines{};
     std::shared_ptr< RasterizerPipelines > skyPipelines{};
 
-    VkFramebuffer worldFramebuffer{ VK_NULL_HANDLE };
-    VkFramebuffer classicFramebuffer_UpscaledPing{ VK_NULL_HANDLE };
-    VkFramebuffer classicFramebuffer_UpscaledPong{ VK_NULL_HANDLE };
-    VkFramebuffer classicFramebuffer_Final{ VK_NULL_HANDLE };
-    VkFramebuffer skyFramebuffer{ VK_NULL_HANDLE };
+    VkFramebuffer worldFramebuffer[ FRAMEBUFFERS_EYE_COUNT ]{};
+    VkFramebuffer classicFramebuffer_UpscaledPing[ FRAMEBUFFERS_EYE_COUNT ]{};
+    VkFramebuffer classicFramebuffer_UpscaledPong[ FRAMEBUFFERS_EYE_COUNT ]{};
+    VkFramebuffer classicFramebuffer_Final[ FRAMEBUFFERS_EYE_COUNT ]{};
+    VkFramebuffer skyFramebuffer[ FRAMEBUFFERS_EYE_COUNT ]{};
+
+    uint32_t activeEye{ 0 };
 
     std::shared_ptr< DepthCopying > depthCopying{};
 
-    DepthBuffer renderDepth{};
-    DepthBuffer upscaledDepth{};
+    DepthBuffer renderDepth[ FRAMEBUFFERS_EYE_COUNT ]{};
+    DepthBuffer upscaledDepth[ FRAMEBUFFERS_EYE_COUNT ]{};
 };
 
 }

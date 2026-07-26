@@ -118,6 +118,7 @@ public:
 
     void          AddDefaultCamera( const RgCameraInfo& info );
     const Camera& GetCamera( float fallbackAspect );
+    Camera        BuildCamera( const RgCameraInfo& info ) const;
 
     [[nodiscard]] bool StaticSceneExists() const { return !staticMeshNames.empty(); }
 

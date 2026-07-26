@@ -33,7 +33,7 @@ RTGL1::DepthCopying::DepthCopying( VkDevice             _device,
                                    const Framebuffers&  _storageFramebuffers )
     : device{ _device }
     , renderPass{ VK_NULL_HANDLE }
-    , framebuffer{ VK_NULL_HANDLE }
+
     , pipelineLayout{ VK_NULL_HANDLE }
     , pipeline{ VK_NULL_HANDLE }
 {
@@ -58,7 +58,7 @@ void RTGL1::DepthCopying::Process( VkCommandBuffer     cmd,
                                    uint32_t            height,
                                    bool                justClear )
 {
-    assert( renderPass && framebuffer && pipeline && pipelineLayout );
+    assert( renderPass && framebuffers[ activeEye ] && pipeline && pipelineLayout );
 
     VkDescriptorSet descSets[] = {
         storageFramebuffers.GetDescSet( frameIndex ),
@@ -81,7 +81,7 @@ void RTGL1::DepthCopying::Process( VkCommandBuffer     cmd,
     VkRenderPassBeginInfo beginInfo = {
         .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass      = renderPass,
-        .framebuffer     = framebuffer,
+        .framebuffer     = framebuffers[ activeEye ],
         .renderArea      = renderArea,
         .clearValueCount = 0,
     };
@@ -190,33 +190,49 @@ void RTGL1::DepthCopying::CreateRenderPass( VkFormat depthFormat )
     SET_DEBUG_NAME( device, renderPass, VK_OBJECT_TYPE_RENDER_PASS, "Depth copying render pass" );
 }
 
-void RTGL1::DepthCopying::CreateFramebuffers( VkImageView depthAttchView,
+void RTGL1::DepthCopying::SetActiveEye( uint32_t eyeIndex )
+{
+    assert( eyeIndex < FRAMEBUFFERS_EYE_COUNT );
+    activeEye = eyeIndex;
+}
+
+void RTGL1::DepthCopying::CreateFramebuffers( const VkImageView depthAttchViews[ FRAMEBUFFERS_EYE_COUNT ],
                                               uint32_t    width,
                                               uint32_t    height )
 {
     assert( renderPass );
-    assert( !framebuffer );
+    for( VkFramebuffer framebuffer : framebuffers )
+    {
+        assert( !framebuffer );
+    }
 
     VkFramebufferCreateInfo fbInfo = {
         .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
         .renderPass      = renderPass,
         .attachmentCount = 1,
-        .pAttachments    = &depthAttchView,
+        .pAttachments    = nullptr,
         .width           = width,
         .height          = height,
         .layers          = 1,
     };
 
-    VkResult r = vkCreateFramebuffer( device, &fbInfo, nullptr, &framebuffer );
-    VK_CHECKERROR( r );
+    for( uint32_t eye = 0; eye < FRAMEBUFFERS_EYE_COUNT; eye++ )
+    {
+        fbInfo.pAttachments = &depthAttchViews[ eye ];
+        VkResult r = vkCreateFramebuffer( device, &fbInfo, nullptr, &framebuffers[ eye ] );
+        VK_CHECKERROR( r );
+    }
 }
 
 void RTGL1::DepthCopying::DestroyFramebuffers()
 {
-    if( framebuffer != VK_NULL_HANDLE )
+    for( VkFramebuffer& framebuffer : framebuffers )
     {
-        vkDestroyFramebuffer( device, framebuffer, nullptr );
-        framebuffer = VK_NULL_HANDLE;
+        if( framebuffer != VK_NULL_HANDLE )
+        {
+            vkDestroyFramebuffer( device, framebuffer, nullptr );
+            framebuffer = VK_NULL_HANDLE;
+        }
     }
 }
 

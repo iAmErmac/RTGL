@@ -73,6 +73,8 @@ public:
 
     void PrepareForFrame( bool reset );
 
+    void SetActiveEye( uint32_t eyeIndex );
+
     void AddSource( const RgSpawnFluidInfo& src );
 
     void Simulate( VkCommandBuffer  cmd,
@@ -141,12 +143,13 @@ private:
     VkPipelineLayout m_visualizePipelineLayout{ VK_NULL_HANDLE };
     VkPipeline       m_visualizePipeline{ VK_NULL_HANDLE };
     VkRenderPass     m_renderPass{ VK_NULL_HANDLE };
-    VkFramebuffer    m_passFramebuffer{};
+    VkFramebuffer    m_passFramebuffer[ FRAMEBUFFERS_EYE_COUNT ]{};
+    uint32_t          m_activeEye{};
 
     VkPipelineLayout m_smoothPipelineLayout{ VK_NULL_HANDLE };
     VkPipeline       m_smoothPipelines[ 2 ]{};
 
-    AliasedDef m_depth{};
+    AliasedDef m_depth[ FRAMEBUFFERS_EYE_COUNT ]{};
 
     RingBuf m_active{};
 

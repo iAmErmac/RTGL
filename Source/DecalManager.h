@@ -57,8 +57,10 @@ public:
                                      const Framebuffers&  framebuffers );
 
     VkRenderPass  GetRenderPass() { return renderPass; }
-    VkFramebuffer GetFramebuffer( uint32_t frameIndex ) { return passFramebuffers[ frameIndex ]; }
+    VkFramebuffer GetFramebuffer( uint32_t frameIndex ) { return passFramebuffers[ activeEye ][ frameIndex ]; }
     VkPipeline    GetDrawPipeline() { return pipeline; }
+
+    void SetActiveEye( uint32_t eyeIndex );
     VkPipelineLayout GetDrawPipelineLayout() { return drawPipelineLayout; }
 
     void OnShaderReload( const ShaderManager* shaderManager ) override;
@@ -76,7 +78,8 @@ private:
     std::shared_ptr< Framebuffers > storageFramebuffers;
 
     VkRenderPass  renderPass{ VK_NULL_HANDLE };
-    VkFramebuffer passFramebuffers[ MAX_FRAMES_IN_FLIGHT ]{};
+    VkFramebuffer passFramebuffers[ FRAMEBUFFERS_EYE_COUNT ][ MAX_FRAMES_IN_FLIGHT ]{};
+    uint32_t      activeEye{};
 
     VkPipelineLayout drawPipelineLayout{ VK_NULL_HANDLE };
     VkPipeline       pipeline{ VK_NULL_HANDLE };

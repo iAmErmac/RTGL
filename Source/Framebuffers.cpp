@@ -36,7 +36,7 @@ static_assert( MAX_FRAMES_IN_FLIGHT == FRAMEBUFFERS_HISTORY_LENGTH,
                "frames in flight" );
 
 FramebufferImageIndex Framebuffers::FrameIndexToFBIndex(
-    FramebufferImageIndex framebufferImageIndex, uint32_t frameIndex )
+    FramebufferImageIndex framebufferImageIndex, uint32_t frameIndex ) const
 {
     assert( frameIndex < FRAMEBUFFERS_HISTORY_LENGTH );
     assert( framebufferImageIndex >= 0 && framebufferImageIndex < ShFramebuffers_Count );
@@ -69,9 +69,9 @@ Framebuffers::Framebuffers( VkDevice                                _device,
     , descPool( VK_NULL_HANDLE )
     , descSets{}
 {
-    images.resize( ShFramebuffers_Count );
-    imageMemories.resize( ShFramebuffers_Count );
-    imageViews.resize( ShFramebuffers_Count );
+    images.resize( ShFramebuffers_Count * FRAMEBUFFERS_EYE_COUNT );
+    imageMemories.resize( ShFramebuffers_Count * FRAMEBUFFERS_EYE_COUNT );
+    imageViews.resize( ShFramebuffers_Count * FRAMEBUFFERS_EYE_COUNT );
 
     CreateDescriptors();
     CreateSamplers();
@@ -147,17 +147,17 @@ void Framebuffers::CreateDescriptors()
         VkDescriptorPoolSize poolSizes[] = {
             {
                 .type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .descriptorCount = allBindingsCount * FRAMEBUFFERS_HISTORY_LENGTH,
+                .descriptorCount = allBindingsCount * FRAMEBUFFERS_HISTORY_LENGTH * FRAMEBUFFERS_EYE_COUNT,
             },
             {
                 .type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .descriptorCount = allBindingsCount * FRAMEBUFFERS_HISTORY_LENGTH,
+                .descriptorCount = allBindingsCount * FRAMEBUFFERS_HISTORY_LENGTH * FRAMEBUFFERS_EYE_COUNT,
             },
         };
 
         VkDescriptorPoolCreateInfo poolInfo = {
             .sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-            .maxSets       = FRAMEBUFFERS_HISTORY_LENGTH,
+            .maxSets       = FRAMEBUFFERS_HISTORY_LENGTH * FRAMEBUFFERS_EYE_COUNT,
             .poolSizeCount = std::size( poolSizes ),
             .pPoolSizes    = poolSizes,
         };
@@ -169,20 +169,23 @@ void Framebuffers::CreateDescriptors()
             device, descPool, VK_OBJECT_TYPE_DESCRIPTOR_POOL, "Framebuffers Desc pool" );
     }
 
-    for( uint32_t i = 0; i < FRAMEBUFFERS_HISTORY_LENGTH; i++ )
+    for( uint32_t eye = 0; eye < FRAMEBUFFERS_EYE_COUNT; eye++ )
     {
-        VkDescriptorSetAllocateInfo allocInfo = {
-            .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .descriptorPool     = descPool,
-            .descriptorSetCount = 1,
-            .pSetLayouts        = &descSetLayout,
-        };
+        for( uint32_t i = 0; i < FRAMEBUFFERS_HISTORY_LENGTH; i++ )
+        {
+            VkDescriptorSetAllocateInfo allocInfo = {
+                .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                .descriptorPool     = descPool,
+                .descriptorSetCount = 1,
+                .pSetLayouts        = &descSetLayout,
+            };
 
-        VkResult r = vkAllocateDescriptorSets( device, &allocInfo, &descSets[ i ] );
+            VkResult r = vkAllocateDescriptorSets( device, &allocInfo, &descSets[ eye ][ i ] );
 
-        VK_CHECKERROR( r );
-        SET_DEBUG_NAME(
-            device, descSets[ i ], VK_OBJECT_TYPE_DESCRIPTOR_SET, "Framebuffers Desc set" );
+            VK_CHECKERROR( r );
+            SET_DEBUG_NAME(
+                device, descSets[ eye ][ i ], VK_OBJECT_TYPE_DESCRIPTOR_SET, "Framebuffers Desc set" );
+        }
     }
 }
 
@@ -216,6 +219,31 @@ void RTGL1::Framebuffers::CreateSamplers()
         VkResult r = vkCreateSampler( device, &info, nullptr, &bilinearSampler );
         VK_CHECKERROR( r );
     }
+}
+
+void Framebuffers::SetActiveEye( uint32_t eyeIndex )
+{
+    assert( eyeIndex < FRAMEBUFFERS_EYE_COUNT );
+    activeEye = eyeIndex;
+}
+
+uint32_t Framebuffers::GetActiveEye() const
+{
+    return activeEye;
+}
+
+bool Framebuffers::UsesStereoEyeStorage( FramebufferImageIndex framebufferImageIndex )
+{
+    const uint32_t index = static_cast< uint32_t >( framebufferImageIndex );
+    return index <= FB_IMAGE_INDEX_PRIMARY_TO_REFL_REFR ||
+           ( index >= FB_IMAGE_INDEX_ACCUM_HISTORY_LENGTH && index <= FB_IMAGE_INDEX_SCATTERING_HISTORY_PREV ) ||
+           index >= FB_IMAGE_INDEX_RESERVOIRS;
+}
+size_t Framebuffers::GetStorageIndex( FramebufferImageIndex framebufferImageIndex ) const
+{
+    return UsesStereoEyeStorage( framebufferImageIndex )
+               ? static_cast< size_t >( activeEye ) * ShFramebuffers_Count + framebufferImageIndex
+               : framebufferImageIndex;
 }
 
 bool Framebuffers::PrepareForSize( ResolutionState resolutionState, bool needShared )
@@ -330,8 +358,8 @@ RTGL1::FramebufferImageIndex RTGL1::Framebuffers::BlitForEffects(
 
     const bool fromFinal = src == FB_IMAGE_INDEX_FINAL;
 
-    const VkImage srcImage = images[ src ];
-    const VkImage dstImage = images[ dst ];
+    const VkImage srcImage = images[ GetStorageIndex( src ) ];
+    const VkImage dstImage = images[ GetStorageIndex( dst ) ];
 
     const VkOffset3D srcExtent      = ToSigned( GetFramebufSize( currentResolution, src ) );
     const VkOffset3D upscaledExtent = ToSigned( GetFramebufSize( currentResolution, dst ) );
@@ -435,8 +463,8 @@ RTGL1::FramebufferImageIndex RTGL1::Framebuffers::BlitForEffects(
                 break;
         }
 
-        VkImage newSrcImage = images[ newSrc ];
-        VkImage newDstImage = images[ newDst ];
+        VkImage newSrcImage = images[ GetStorageIndex( newSrc ) ];
+        VkImage newDstImage = images[ GetStorageIndex( newDst ) ];
 
         const VkOffset3D& newSrcExtent = dstExtent;
         const VkOffset3D& newDstExtent = upscaledExtent;
@@ -575,7 +603,7 @@ RTGL1::FramebufferImageIndex RTGL1::Framebuffers::BlitForEffects(
 
 VkDescriptorSet Framebuffers::GetDescSet( uint32_t frameIndex ) const
 {
-    return descSets[ frameIndex ];
+    return descSets[ activeEye ][ frameIndex ];
 }
 
 VkDescriptorSetLayout Framebuffers::GetDescSetLayout() const
@@ -586,14 +614,14 @@ VkDescriptorSetLayout Framebuffers::GetDescSetLayout() const
 VkImage Framebuffers::GetImage( FramebufferImageIndex fbImageIndex, uint32_t frameIndex ) const
 {
     fbImageIndex = FrameIndexToFBIndex( fbImageIndex, frameIndex );
-    return images[ fbImageIndex ];
+    return images[ GetStorageIndex( fbImageIndex ) ];
 }
 
 VkImageView Framebuffers::GetImageView( FramebufferImageIndex fbImageIndex,
                                         uint32_t              frameIndex ) const
 {
     fbImageIndex = FrameIndexToFBIndex( fbImageIndex, frameIndex );
-    return imageViews[ fbImageIndex ];
+    return imageViews[ GetStorageIndex( fbImageIndex ) ];
 }
 
 std::tuple< VkImage, VkImageView, VkFormat > RTGL1::Framebuffers::GetImageHandles(
@@ -622,7 +650,7 @@ auto Framebuffers::GetImageForAlias( FramebufferImageIndex fbImageIndex, uint32_
     fbImageIndex = FrameIndexToFBIndex( fbImageIndex, frameIndex );
 
     return std::make_tuple( ShFramebuffers_Formats[ fbImageIndex ],
-                            imageMemories[ fbImageIndex ] );
+                            imageMemories[ GetStorageIndex( fbImageIndex ) ] );
 }
 
 VkExtent2D RTGL1::Framebuffers::GetFramebufSize( const ResolutionState& resolutionState,
@@ -677,7 +705,7 @@ void Framebuffers::CreateImages( ResolutionState resolutionState,
                                  bool            sharedExist,
                                  bool            needShared )
 {
-    const bool recreateOnlyShared = ( currentResolution == resolutionState && //
+    const bool recreateOnlyShared = ( currentResolution == resolutionState &&
                                       sharedExist != needShared );
     if( recreateOnlyShared )
     {
@@ -687,24 +715,30 @@ void Framebuffers::CreateImages( ResolutionState resolutionState,
             dxgi::Framebuf_CreateDX12Resources( *cmdManager, *allocator, resolutionState );
         }
         NotifySubscribersAboutResize( resolutionState );
-
         return;
     }
 
     DestroyImages();
-
     VkCommandBuffer cmd = cmdManager->StartGraphicsCmd();
 
-    for( uint32_t i = 0; i < ShFramebuffers_Count; i++ )
+    for( uint32_t eye = 0; eye < FRAMEBUFFERS_EYE_COUNT; eye++ )
     {
-        VkFormat              format = ShFramebuffers_Formats[ i ];
-        FramebufferImageFlags flags  = ShFramebuffers_Flags[ i ];
-
-        const VkExtent2D extent =
-            GetFramebufSize( resolutionState, static_cast< FramebufferImageIndex >( i ) );
-
-        // create image
+        for( uint32_t i = 0; i < ShFramebuffers_Count; i++ )
         {
+            const auto framebufferImageIndex = static_cast< FramebufferImageIndex >( i );
+            const bool usesStereoEyeStorage = UsesStereoEyeStorage( framebufferImageIndex );
+            if( eye > 0 && !usesStereoEyeStorage )
+            {
+                continue;
+            }
+            const size_t storageIndex = usesStereoEyeStorage
+                ? static_cast< size_t >( eye ) * ShFramebuffers_Count + i
+                : i;
+            const VkFormat format = ShFramebuffers_Formats[ i ];
+            const FramebufferImageFlags flags = ShFramebuffers_Flags[ i ];
+            const VkExtent2D extent =
+                GetFramebufSize( resolutionState, static_cast< FramebufferImageIndex >( i ) );
+
             VkImageCreateInfo imageInfo = {
                 .sType       = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                 .imageType   = VK_IMAGE_TYPE_2D,
@@ -718,44 +752,38 @@ void Framebuffers::CreateImages( ResolutionState resolutionState,
                          VK_IMAGE_USAGE_SAMPLED_BIT,
                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
             };
-
             if( flags & FB_IMAGE_FLAGS_FRAMEBUF_FLAGS_IS_ATTACHMENT )
             {
                 imageInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
             }
-
             if( flags & FB_IMAGE_FLAGS_FRAMEBUF_FLAGS_USAGE_TRANSFER )
             {
-                imageInfo.usage |=
-                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
             }
 
-            VkResult r = vkCreateImage( device, &imageInfo, nullptr, &images[ i ] );
-
+            VkResult r = vkCreateImage( device, &imageInfo, nullptr, &images[ storageIndex ] );
             VK_CHECKERROR( r );
-            SET_DEBUG_NAME(
-                device, images[ i ], VK_OBJECT_TYPE_IMAGE, ShFramebuffers_DebugNames[ i ] );
-        }
+            SET_DEBUG_NAME( device,
+                            images[ storageIndex ],
+                            VK_OBJECT_TYPE_IMAGE,
+                            ShFramebuffers_DebugNames[ i ] );
 
-        // allocate dedicated memory
-        {
             VkMemoryRequirements memReqs;
-            vkGetImageMemoryRequirements( device, images[ i ], &memReqs );
-
-            imageMemories[ i ] = allocator->AllocDedicated( memReqs,
-                                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                                            MemoryAllocator::AllocType::DEFAULT,
-                                                            ShFramebuffers_DebugNames[ i ] );
-
-            VkResult r = vkBindImageMemory( device, images[ i ], imageMemories[ i ], 0 );
+            vkGetImageMemoryRequirements( device, images[ storageIndex ], &memReqs );
+            imageMemories[ storageIndex ] = allocator->AllocDedicated(
+                memReqs,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                MemoryAllocator::AllocType::DEFAULT,
+                ShFramebuffers_DebugNames[ i ] );
+            r = vkBindImageMemory( device,
+                                   images[ storageIndex ],
+                                   imageMemories[ storageIndex ],
+                                   0 );
             VK_CHECKERROR( r );
-        }
 
-        // create image view
-        {
             VkImageViewCreateInfo viewInfo = {
                 .sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image            = images[ i ],
+                .image            = images[ storageIndex ],
                 .viewType         = VK_IMAGE_VIEW_TYPE_2D,
                 .format           = format,
                 .subresourceRange = { .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -764,118 +792,102 @@ void Framebuffers::CreateImages( ResolutionState resolutionState,
                                       .baseArrayLayer = 0,
                                       .layerCount     = 1 },
             };
-
-            VkResult r = vkCreateImageView( device, &viewInfo, nullptr, &imageViews[ i ] );
-
+            r = vkCreateImageView( device, &viewInfo, nullptr, &imageViews[ storageIndex ] );
             VK_CHECKERROR( r );
             SET_DEBUG_NAME( device,
-                            imageViews[ i ],
+                            imageViews[ storageIndex ],
                             VK_OBJECT_TYPE_IMAGE_VIEW,
                             ShFramebuffers_DebugNames[ i ] );
-        }
 
-        // to general layout
-        Utils::BarrierImage( cmd,
-                             images[ i ],
-                             0,
-                             VK_ACCESS_SHADER_WRITE_BIT,
-                             VK_IMAGE_LAYOUT_UNDEFINED,
-                             VK_IMAGE_LAYOUT_GENERAL );
+            Utils::BarrierImage( cmd,
+                                 images[ storageIndex ],
+                                 0,
+                                 VK_ACCESS_SHADER_WRITE_BIT,
+                                 VK_IMAGE_LAYOUT_UNDEFINED,
+                                 VK_IMAGE_LAYOUT_GENERAL );
+        }
     }
 
-    // image creation happens rarely
     cmdManager->Submit( cmd );
     cmdManager->WaitGraphicsIdle();
-
     if( needShared )
     {
         dxgi::Framebuf_CreateDX12Resources( *cmdManager, *allocator, resolutionState );
     }
-
     currentResolution = resolutionState;
     UpdateDescriptors();
     NotifySubscribersAboutResize( resolutionState );
 }
-
 void Framebuffers::UpdateDescriptors()
 {
-    const uint32_t allBindingsCount     = ShFramebuffers_Count * 2;
+    const uint32_t allBindingsCount = ShFramebuffers_Count * 2;
     const uint32_t samplerBindingOffset = ShFramebuffers_Count;
 
-    std::vector< VkDescriptorImageInfo > imageInfos( allBindingsCount );
-
-    // gimage2D
-    for( uint32_t i = 0; i < ShFramebuffers_Count; i++ )
+    for( uint32_t eye = 0; eye < FRAMEBUFFERS_EYE_COUNT; eye++ )
     {
-        imageInfos[ i ] = {
-            .sampler     = VK_NULL_HANDLE,
-            .imageView   = imageViews[ i ],
-            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-        };
-    }
-
-    // gsampler2D
-    for( uint32_t i = 0; i < ShFramebuffers_Count; i++ )
-    {
-        // texelFetch should be used to get a specific texel,
-        // and texture/textureLod for sampling with bilinear interpolation
-
-        bool useBilinear =
-            ShFramebuffers_Flags[ i ] & FB_IMAGE_FLAGS_FRAMEBUF_FLAGS_BILINEAR_SAMPLER;
-
-        imageInfos[ samplerBindingOffset + i ] = {
-            .sampler     = useBilinear ? bilinearSampler : nearestSampler,
-            .imageView   = imageViews[ i ],
-            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-        };
-    }
-
-    std::vector< VkWriteDescriptorSet > writes( allBindingsCount * FRAMEBUFFERS_HISTORY_LENGTH );
-    uint32_t                            wrtCount = 0;
-
-    for( uint32_t k = 0; k < FRAMEBUFFERS_HISTORY_LENGTH; k++ )
-    {
-        // gimage2D
+        std::vector< VkDescriptorImageInfo > imageInfos( allBindingsCount );
         for( uint32_t i = 0; i < ShFramebuffers_Count; i++ )
         {
-            writes[ wrtCount++ ] = {
-                .sType  = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = descSets[ k ],
-                .dstBinding =
-                    k == 0 ? ShFramebuffers_Bindings[ i ] : ShFramebuffers_BindingsSwapped[ i ],
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .pImageInfo      = &imageInfos[ i ],
+            const auto framebufferImageIndex = static_cast< FramebufferImageIndex >( i );
+            const size_t storageIndex = UsesStereoEyeStorage( framebufferImageIndex )
+                ? static_cast< size_t >( eye ) * ShFramebuffers_Count + i
+                : i;
+            imageInfos[ i ] = {
+                .sampler     = VK_NULL_HANDLE,
+                .imageView   = imageViews[ storageIndex ],
+                .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+            };
+
+            const bool useBilinear =
+                ShFramebuffers_Flags[ i ] & FB_IMAGE_FLAGS_FRAMEBUF_FLAGS_BILINEAR_SAMPLER;
+            imageInfos[ samplerBindingOffset + i ] = {
+                .sampler     = useBilinear ? bilinearSampler : nearestSampler,
+                .imageView   = imageViews[ storageIndex ],
+                .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
             };
         }
 
-        // gsampler2D
-        for( uint32_t i = 0; i < ShFramebuffers_Count; i++ )
+        std::vector< VkWriteDescriptorSet > writes(
+            allBindingsCount * FRAMEBUFFERS_HISTORY_LENGTH );
+        uint32_t wrtCount = 0;
+        for( uint32_t k = 0; k < FRAMEBUFFERS_HISTORY_LENGTH; k++ )
         {
-            uint32_t dstBinding = k == 0 ? ShFramebuffers_Sampler_Bindings[ i ]
-                                         : ShFramebuffers_Sampler_BindingsSwapped[ i ];
-
-            if( dstBinding == FB_SAMPLER_INVALID_BINDING )
+            for( uint32_t i = 0; i < ShFramebuffers_Count; i++ )
             {
-                continue;
+                writes[ wrtCount++ ] = {
+                    .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet          = descSets[ eye ][ k ],
+                    .dstBinding      =
+                        k == 0 ? ShFramebuffers_Bindings[ i ] : ShFramebuffers_BindingsSwapped[ i ],
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                    .pImageInfo      = &imageInfos[ i ],
+                };
             }
-
-            writes[ wrtCount++ ] = {
-                .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet          = descSets[ k ],
-                .dstBinding      = dstBinding,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .pImageInfo      = &imageInfos[ samplerBindingOffset + i ],
-            };
+            for( uint32_t i = 0; i < ShFramebuffers_Count; i++ )
+            {
+                const uint32_t dstBinding =
+                    k == 0 ? ShFramebuffers_Sampler_Bindings[ i ] :
+                             ShFramebuffers_Sampler_BindingsSwapped[ i ];
+                if( dstBinding == FB_SAMPLER_INVALID_BINDING )
+                {
+                    continue;
+                }
+                writes[ wrtCount++ ] = {
+                    .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet          = descSets[ eye ][ k ],
+                    .dstBinding      = dstBinding,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    .pImageInfo      = &imageInfos[ samplerBindingOffset + i ],
+                };
+            }
         }
+        vkUpdateDescriptorSets( device, wrtCount, writes.data(), 0, nullptr );
     }
-
-    vkUpdateDescriptorSets( device, wrtCount, writes.data(), 0, nullptr );
 }
-
 void Framebuffers::DestroyImages()
 {
     dxgi::Framebuf_Destroy();

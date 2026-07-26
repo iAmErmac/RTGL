@@ -22,6 +22,7 @@
 
 #include <RTGL1/RTGL1.h>
 
+#include <array>
 #include <memory>
 
 #if defined(RG_WITH_OPENXR)
@@ -139,7 +140,12 @@ private:
     void FillUniform( ShGlobalUniform* gu, const RgDrawFrameInfo& drawInfo ) const;
 
     VkCommandBuffer BeginFrame( const RgStartFrameInfo& info );
+    void            PrepareRender( VkCommandBuffer& cmd, const RgDrawFrameInfo& drawInfo );
     auto            Render( VkCommandBuffer &cmd, const RgDrawFrameInfo& drawInfo ) -> FramebufferImageIndex;
+    // Sequential eye passes are the current implementation. Keeping eye
+    // identity explicit makes a later multiview backend an output/storage
+    // substitution instead of a second renderer with different semantics.
+    auto            RenderEye( VkCommandBuffer& cmd, const RgDrawFrameInfo& drawInfo, uint32_t eyeIndex ) -> FramebufferImageIndex;
     void            EndFrame( VkCommandBuffer cmd, FramebufferImageIndex rendered );
 
     void DrawEndUserWarnings();
@@ -157,11 +163,27 @@ private:
     void Dev_TryBreak( const char* pTextureName, bool isImageUpload );
 
 private:
+    struct EyeRenderState
+    {
+        FramebufferImageIndex finalImage = FB_IMAGE_INDEX_FINAL;
+        FramebufferImageIndex previousAccum = FB_IMAGE_INDEX_UPSCALED_PONG;
+        std::array<float, 16> previousView{};
+        std::array<float, 16> previousProjection{};
+        std::array<float, 16> view{};
+        std::array<float, 16> projection{};
+        std::array<float, 3> previousCameraPosition{};
+        std::array<float, 3> cameraPosition{};
+        uint64_t historyId = 0;
+        bool resetHistory = true;
+        bool cameraValid = false;
+    };
+
     VkInstance   instance;
     VkDevice     device;
     VkSurfaceKHR surface;
 
     FrameState currentFrameState;
+    std::array<EyeRenderState, 2> eyeRenderStates{};
 
     // incremented every frame
     uint32_t frameId;
@@ -181,7 +203,11 @@ private:
     std::shared_ptr< PhysicalDevice > physDevice;
 #if defined(RG_WITH_OPENXR)
     std::unique_ptr< OpenXRPresenter > openxr;
+    // The public API permits pView to point at caller-owned memory. Stereo
+    // cameras are consumed later in the frame, so retain owned copies.
     RgStereoCameraInfoEXT pendingStereoCamera{};
+    std::array<float, 16> pendingStereoViews[2]{};
+    std::array<float, 16> pendingStereoProjections[2]{};
     bool pendingStereoCameraValid = false;
 #endif
     std::shared_ptr< Queues >         queues;
@@ -197,6 +223,7 @@ private:
     std::shared_ptr< Fluid >         fluid;
 
     std::shared_ptr< GlobalUniform >     uniform;
+    std::array< std::shared_ptr< GlobalUniform >, 2 > stereoUniforms{};
     std::shared_ptr< Scene >             scene;
     std::shared_ptr< SceneImportExport > sceneImportExport;
 

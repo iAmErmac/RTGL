@@ -292,6 +292,10 @@ RTGL1::VulkanDevice::VulkanDevice( const RgInstanceCreateInfo* info )
     uniform = std::make_shared< GlobalUniform >( 
         device, 
         memAllocator );
+    for( auto& eyeUniform : stereoUniforms )
+    {
+        eyeUniform = std::make_shared< GlobalUniform >( device, memAllocator );
+    }
     
     framebuffers = std::make_shared< Framebuffers >( 
         device, 

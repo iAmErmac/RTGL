@@ -28,6 +28,8 @@ namespace RTGL1
 class RestirBuffers : public IFramebuffersDependency
 {
 public:
+    static constexpr uint32_t EYE_COUNT = 2;
+
     RestirBuffers( VkDevice device, std::shared_ptr< MemoryAllocator > allocator );
     ~RestirBuffers() override;
 
@@ -37,6 +39,7 @@ public:
     RestirBuffers&        operator=( RestirBuffers&& other ) noexcept = delete;
 
     VkDescriptorSet       GetDescSet( uint32_t frameIndex ) const;
+    void                  SetActiveEye( uint32_t eyeIndex );
     VkDescriptorSetLayout GetDescSetLayout() const;
 
     void OnFramebuffersSizeChange( const ResolutionState& resolutionState ) override;
@@ -61,8 +64,9 @@ private:
 
     VkDescriptorPool                   descPool                         = {};
     VkDescriptorSetLayout              descLayout                       = {};
-    VkDescriptorSet                    descSets[ MAX_FRAMES_IN_FLIGHT ] = {};
+    VkDescriptorSet                    descSets[ EYE_COUNT ][ MAX_FRAMES_IN_FLIGHT ] = {};
+    uint32_t                           activeEye = 0;
 
-    BufferDef                          reservoirs[ MAX_FRAMES_IN_FLIGHT ] = {};
+    BufferDef                          reservoirs[ EYE_COUNT ][ MAX_FRAMES_IN_FLIGHT ] = {};
 };
 }

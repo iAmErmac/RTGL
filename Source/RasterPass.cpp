@@ -108,6 +108,13 @@ RTGL1::RasterPass::~RasterPass()
     DestroyFramebuffers();
 }
 
+void RTGL1::RasterPass::SetActiveEye( uint32_t eyeIndex )
+{
+    assert( eyeIndex < FRAMEBUFFERS_EYE_COUNT );
+    activeEye = eyeIndex;
+    depthCopying->SetActiveEye( eyeIndex );
+}
+
 void RTGL1::RasterPass::PrepareForFinal( VkCommandBuffer     cmd,
                                          uint32_t            frameIndex,
                                          const Framebuffers& storageFramebuffers,
@@ -128,165 +135,110 @@ void RTGL1::RasterPass::CreateFramebuffers( uint32_t              renderWidth,
                                             MemoryAllocator&      allocator,
                                             CommandBufferManager& cmdManager )
 {
-    // validate
+    VkImageView depthViews[ FRAMEBUFFERS_EYE_COUNT ]{};
+    for( uint32_t eye = 0; eye < FRAMEBUFFERS_EYE_COUNT; eye++ )
     {
-        auto sameAtAnyFrameIndex = [ &storageFramebuffers ]( FramebufferImageIndex img ) {
-            VkImageView v0 = storageFramebuffers.GetImageView( img, 0 );
-            for( uint32_t i = 1; i < MAX_FRAMES_IN_FLIGHT; i++ )
-            {
-                if( v0 != storageFramebuffers.GetImageView( img, i ) )
-                {
-                    return false;
-                }
-            }
-            return true;
-        };
-        // used images must not have FRAMEBUF_FLAGS_STORE_PREV flag,
-        // because if an image does, then need to create 2 VkFramebuffer instead of 1
-        assert( sameAtAnyFrameIndex( FB_IMAGE_INDEX_FINAL ) );
-        assert( sameAtAnyFrameIndex( FB_IMAGE_INDEX_SCREEN_EMISSION ) );
-        assert( sameAtAnyFrameIndex( FB_IMAGE_INDEX_REACTIVITY ) );
-        assert( sameAtAnyFrameIndex( FB_IMAGE_INDEX_ALBEDO ) );
-        assert( sameAtAnyFrameIndex( FB_IMAGE_INDEX_UPSCALED_PING ) );
-        assert( sameAtAnyFrameIndex( FB_IMAGE_INDEX_UPSCALED_PONG ) );
+        assert( worldFramebuffer[ eye ] == VK_NULL_HANDLE );
+        assert( skyFramebuffer[ eye ] == VK_NULL_HANDLE );
+        const_cast< Framebuffers& >( storageFramebuffers ).SetActiveEye( eye );
+        renderDepth[ eye ] = CreateDepthBuffers( renderWidth, renderHeight, allocator, cmdManager );
+        upscaledDepth[ eye ] =
+            CreateDepthBuffers( upscaledWidth, upscaledHeight, allocator, cmdManager );
+        depthViews[ eye ] = renderDepth[ eye ].view;
 
-        assert( renderDepth.image == VK_NULL_HANDLE );
-        assert( renderDepth.view == VK_NULL_HANDLE );
-        assert( renderDepth.memory == VK_NULL_HANDLE );
-        assert( upscaledDepth.image == VK_NULL_HANDLE );
-        assert( upscaledDepth.view == VK_NULL_HANDLE );
-        assert( upscaledDepth.memory == VK_NULL_HANDLE );
-
-        assert( worldFramebuffer == VK_NULL_HANDLE );
-        assert( skyFramebuffer == VK_NULL_HANDLE );
-    }
-
-    renderDepth   = CreateDepthBuffers( renderWidth, renderHeight, allocator, cmdManager );
-    upscaledDepth = CreateDepthBuffers( upscaledWidth, upscaledHeight, allocator, cmdManager );
-
-    // world at render size
-    {
-        VkImageView attchs[] = {
+        VkImageView worldAttachments[] = {
             storageFramebuffers.GetImageView( FB_IMAGE_INDEX_FINAL, 0 ),
             storageFramebuffers.GetImageView( FB_IMAGE_INDEX_SCREEN_EMISSION, 0 ),
             storageFramebuffers.GetImageView( FB_IMAGE_INDEX_REACTIVITY, 0 ),
-            renderDepth.view,
+            renderDepth[ eye ].view,
         };
-
-        VkFramebufferCreateInfo fbInfo = {
+        VkFramebufferCreateInfo worldInfo = {
             .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .renderPass      = worldRenderPass,
-            .attachmentCount = std::size( attchs ),
-            .pAttachments    = attchs,
+            .attachmentCount = std::size( worldAttachments ),
+            .pAttachments    = worldAttachments,
             .width           = renderWidth,
             .height          = renderHeight,
             .layers          = 1,
         };
-
-        VkResult r = vkCreateFramebuffer( device, &fbInfo, nullptr, &worldFramebuffer );
+        VkResult r = vkCreateFramebuffer( device, &worldInfo, nullptr, &worldFramebuffer[ eye ] );
         VK_CHECKERROR( r );
 
-        SET_DEBUG_NAME(
-            device, worldFramebuffer, VK_OBJECT_TYPE_FRAMEBUFFER, "Rasterizer raster framebuffer" );
-    }
-    // world at upscaled size, for classic mode
-    {
-        struct UpcaledDst
+        struct UpscaledDst
         {
             FramebufferImageIndex color;
-            VkFramebuffer*        framebuffer;
-            DepthBuffer*          depth;
-            bool                  upscaled;
+            VkFramebuffer* framebuffer;
+            DepthBuffer* depth;
+            bool upscaled;
         };
-
-        // clang-format off
-        UpcaledDst dsts[] = {
-            { FB_IMAGE_INDEX_UPSCALED_PING, &classicFramebuffer_UpscaledPing, &upscaledDepth, true },
-            { FB_IMAGE_INDEX_UPSCALED_PONG, &classicFramebuffer_UpscaledPong, &upscaledDepth, true },
-            { FB_IMAGE_INDEX_FINAL,         &classicFramebuffer_Final,        &renderDepth,   false },
+        UpscaledDst dsts[] = {
+            { FB_IMAGE_INDEX_UPSCALED_PING, &classicFramebuffer_UpscaledPing[ eye ], &upscaledDepth[ eye ], true },
+            { FB_IMAGE_INDEX_UPSCALED_PONG, &classicFramebuffer_UpscaledPong[ eye ], &upscaledDepth[ eye ], true },
+            { FB_IMAGE_INDEX_FINAL, &classicFramebuffer_Final[ eye ], &renderDepth[ eye ], false },
         };
-        // clang-format on
-
-        for( UpcaledDst& d : dsts )
+        for( UpscaledDst& d : dsts )
         {
-            VkImageView attchs[] = {
+            VkImageView attachments[] = {
                 storageFramebuffers.GetImageView( d.color, 0 ),
                 d.depth->view,
             };
-
-            VkFramebufferCreateInfo fbInfo = {
+            VkFramebufferCreateInfo info = {
                 .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
                 .renderPass      = classicRenderPass,
-                .attachmentCount = std::size( attchs ),
-                .pAttachments    = attchs,
+                .attachmentCount = std::size( attachments ),
+                .pAttachments    = attachments,
                 .width           = d.upscaled ? upscaledWidth : renderWidth,
                 .height          = d.upscaled ? upscaledHeight : renderHeight,
                 .layers          = 1,
             };
-
-            VkResult r = vkCreateFramebuffer( device, &fbInfo, nullptr, d.framebuffer );
+            r = vkCreateFramebuffer( device, &info, nullptr, d.framebuffer );
             VK_CHECKERROR( r );
-
-            SET_DEBUG_NAME( device,
-                            *d.framebuffer,
-                            VK_OBJECT_TYPE_FRAMEBUFFER,
-                            "Rasterizer upscaled framebuffer" );
         }
-    }
-    // sky at render size
-    {
-        VkImageView attchs[] = {
-            storageFramebuffers.GetImageView( FB_IMAGE_INDEX_ALBEDO, 0 ),
-            renderDepth.view,
-        };
 
-        VkFramebufferCreateInfo fbInfo = {
+        VkImageView skyAttachments[] = {
+            storageFramebuffers.GetImageView( FB_IMAGE_INDEX_ALBEDO, 0 ),
+            renderDepth[ eye ].view,
+        };
+        VkFramebufferCreateInfo skyInfo = {
             .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .renderPass      = skyRenderPass,
-            .attachmentCount = std::size( attchs ),
-            .pAttachments    = attchs,
+            .attachmentCount = std::size( skyAttachments ),
+            .pAttachments    = skyAttachments,
             .width           = renderWidth,
             .height          = renderHeight,
             .layers          = 1,
         };
-
-        VkResult r = vkCreateFramebuffer( device, &fbInfo, nullptr, &skyFramebuffer );
+        r = vkCreateFramebuffer( device, &skyInfo, nullptr, &skyFramebuffer[ eye ] );
         VK_CHECKERROR( r );
-
-        SET_DEBUG_NAME( device,
-                        skyFramebuffer,
-                        VK_OBJECT_TYPE_FRAMEBUFFER,
-                        "Rasterizer raster sky framebuffer" );
     }
-
-    depthCopying->CreateFramebuffers( renderDepth.view, renderWidth, renderHeight );
+    const_cast< Framebuffers& >( storageFramebuffers ).SetActiveEye( 0 );
+    depthCopying->CreateFramebuffers( depthViews, renderWidth, renderHeight );
 }
 
 void RTGL1::RasterPass::DestroyFramebuffers()
 {
     depthCopying->DestroyFramebuffers();
-
-    DestroyDepthBuffers( device, renderDepth );
-    DestroyDepthBuffers( device, upscaledDepth );
-
-    VkFramebuffer* todelete[] = {
-        &worldFramebuffer,
-        &classicFramebuffer_UpscaledPing,
-        &classicFramebuffer_UpscaledPong,
-        &classicFramebuffer_Final,
-        &skyFramebuffer,
-    };
-
-    for( VkFramebuffer* f : todelete )
+    for( uint32_t eye = 0; eye < FRAMEBUFFERS_EYE_COUNT; eye++ )
     {
-        if( *f != VK_NULL_HANDLE )
+        DestroyDepthBuffers( device, renderDepth[ eye ] );
+        DestroyDepthBuffers( device, upscaledDepth[ eye ] );
+        VkFramebuffer* todelete[] = {
+            &worldFramebuffer[ eye ],
+            &classicFramebuffer_UpscaledPing[ eye ],
+            &classicFramebuffer_UpscaledPong[ eye ],
+            &classicFramebuffer_Final[ eye ],
+            &skyFramebuffer[ eye ],
+        };
+        for( VkFramebuffer* f : todelete )
         {
-            vkDestroyFramebuffer( device, *f, nullptr );
-            *f = VK_NULL_HANDLE;
+            if( *f != VK_NULL_HANDLE )
+            {
+                vkDestroyFramebuffer( device, *f, nullptr );
+                *f = VK_NULL_HANDLE;
+            }
         }
     }
 }
-
 VkRenderPass RTGL1::RasterPass::GetWorldRenderPass() const
 {
     return worldRenderPass;
@@ -321,23 +273,23 @@ const std::shared_ptr< RTGL1::RasterizerPipelines >& RTGL1::RasterPass::GetSkyRa
 
 VkFramebuffer RTGL1::RasterPass::GetWorldFramebuffer() const
 {
-    return worldFramebuffer;
+    return worldFramebuffer[ activeEye ];
 }
 
 VkFramebuffer RTGL1::RasterPass::GetClassicFramebuffer( FramebufferImageIndex img ) const
 {
     switch( img )
     {
-        case FB_IMAGE_INDEX_FINAL: return classicFramebuffer_Final;
-        case FB_IMAGE_INDEX_UPSCALED_PING: return classicFramebuffer_UpscaledPing;
-        case FB_IMAGE_INDEX_UPSCALED_PONG: return classicFramebuffer_UpscaledPong;
+        case FB_IMAGE_INDEX_FINAL: return classicFramebuffer_Final[ activeEye ];
+        case FB_IMAGE_INDEX_UPSCALED_PING: return classicFramebuffer_UpscaledPing[ activeEye ];
+        case FB_IMAGE_INDEX_UPSCALED_PONG: return classicFramebuffer_UpscaledPong[ activeEye ];
         default: assert( 0 ); return nullptr;
     }
 }
 
 VkFramebuffer RTGL1::RasterPass::GetSkyFramebuffer() const
 {
-    return skyFramebuffer;
+    return skyFramebuffer[ activeEye ];
 }
 
 void RTGL1::RasterPass::OnShaderReload( const ShaderManager* shaderManager )

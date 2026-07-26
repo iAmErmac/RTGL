@@ -244,12 +244,26 @@ namespace
             static_assert( sizeof info.right == 3 * sizeof( float ) );
             static_assert( sizeof info.up == 3 * sizeof( float ) );
 
-            Matrix::MakeViewMatrix( cameraInfo.view, info.position, info.right, info.up );
-            Matrix::MakeProjectionMatrix( cameraInfo.projection,
-                                          cameraInfo.aspect,
-                                          cameraInfo.fovYRadians,
-                                          cameraInfo.cameraNear,
-                                          cameraInfo.cameraFar );
+            if( info.pView )
+            {
+                std::memcpy( cameraInfo.view, info.pView, sizeof( cameraInfo.view ) );
+            }
+            else
+            {
+                Matrix::MakeViewMatrix( cameraInfo.view, info.position, info.right, info.up );
+            }
+            if( info.pProjection )
+            {
+                std::memcpy( cameraInfo.projection, info.pProjection, sizeof( cameraInfo.projection ) );
+            }
+            else
+            {
+                Matrix::MakeProjectionMatrix( cameraInfo.projection,
+                                              cameraInfo.aspect,
+                                              cameraInfo.fovYRadians,
+                                              cameraInfo.cameraNear,
+                                              cameraInfo.cameraFar );
+            }
         }
         Matrix::Inverse( cameraInfo.viewInverse, cameraInfo.view );
         Matrix::Inverse( cameraInfo.projectionInverse, cameraInfo.projection );
@@ -445,6 +459,10 @@ void RTGL1::Scene::AddDefaultCamera( const RgCameraInfo& info )
     cameraInfo_Default = info;
 }
 
+RTGL1::Camera RTGL1::Scene::BuildCamera( const RgCameraInfo& info ) const
+{
+    return MakeCamera( info );
+}
 const RTGL1::Camera& RTGL1::Scene::GetCamera( float fallbackAspect )
 {
     if( !curFrameCamera )

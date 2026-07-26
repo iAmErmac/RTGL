@@ -287,6 +287,8 @@ void RTGL1::RasterizedDataCollector::AddPrimitive( uint32_t                   fr
         .viewport = IfNotNull( pViewport, ToVk( *pViewport ) ),
 
         .pipelineState = ToPipelineState( rasterType, info ),
+        .isFirstPerson = ( info.flags & RG_MESH_PRIMITIVE_FIRST_PERSON ) != 0,
+        .isHud = ( info.flags & RG_MESH_PRIMITIVE_HUD ) != 0,
     } );
 
     curVertexCount += info.vertexCount;

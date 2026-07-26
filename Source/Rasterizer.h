@@ -68,6 +68,7 @@ public:
     Rasterizer& operator=( const Rasterizer& other )     = delete;
     Rasterizer& operator=( Rasterizer&& other ) noexcept = delete;
 
+    void SetActiveEye( uint32_t eyeIndex );
     void PrepareForFrame( uint32_t frameIndex );
     void Upload( uint32_t                   frameIndex,
                  GeometryRasterType         rasterType,
@@ -137,7 +138,9 @@ public:
                           const float*          proj,
                           uint32_t              swapchainWidth,
                           uint32_t              swapchainHeight,
-                          bool                  isHdr );
+                          bool                  isHdr,
+                          bool                  hudOnly = false,
+                          bool                  filterHud = false );
 
     void OnShaderReload( const ShaderManager* shaderManager ) override;
     void OnFramebuffersSizeChange( const ResolutionState& resolutionState ) override;

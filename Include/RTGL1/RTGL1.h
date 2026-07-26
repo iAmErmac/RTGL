@@ -468,6 +468,8 @@ typedef enum RgMeshPrimitiveFlagBits
     RG_MESH_PRIMITIVE_EXPORT_INVERT_NORMALS = 1 << 15,
     RG_MESH_PRIMITIVE_NO_SHADOW             = 1 << 16,
     RG_MESH_PRIMITIVE_NO_MOTION_VECTORS     = 1 << 17,
+    RG_MESH_PRIMITIVE_FIRST_PERSON          = 1 << 18,
+    RG_MESH_PRIMITIVE_HUD                   = 1 << 19,
 } RgMeshPrimitiveFlagBits;
 typedef uint32_t RgMeshPrimitiveFlags;
 
@@ -692,6 +694,8 @@ typedef struct RgCameraInfo
     float           cameraFar;
     // Optional view matrix ({ pView[0],pView[1],pView[2],pView[3] } is a column).
     const float     *pView;
+    // Optional projection matrix ({ pProjection[0],pProjection[1],pProjection[2],pProjection[3] } is a column).
+    const float     *pProjection;
 } RgCameraInfo;
 
 typedef RgResult( RGAPI_PTR* PFN_rgUploadCamera )( const RgCameraInfo* pInfo );

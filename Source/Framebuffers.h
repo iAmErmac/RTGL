@@ -38,6 +38,7 @@ class Swapchain;
 
 // Hold info for previous and current frames
 #define FRAMEBUFFERS_HISTORY_LENGTH 2
+#define FRAMEBUFFERS_EYE_COUNT 2
 
 class Framebuffers
 {
@@ -55,6 +56,9 @@ public:
     Framebuffers& operator=( Framebuffers&& other ) noexcept = delete;
 
     bool PrepareForSize( ResolutionState resolutionState, bool needShared );
+
+    void SetActiveEye( uint32_t eyeIndex );
+    [[nodiscard]] uint32_t GetActiveEye() const;
 
     enum class BarrierType
     {
@@ -105,8 +109,11 @@ public:
     void Unsubscribe( const IFramebuffersDependency* subscriber );
 
 private:
-    static FramebufferImageIndex FrameIndexToFBIndex( FramebufferImageIndex framebufferImageIndex,
-                                                      uint32_t              frameIndex );
+    [[nodiscard]] size_t GetStorageIndex( FramebufferImageIndex framebufferImageIndex ) const;
+    [[nodiscard]] static bool UsesStereoEyeStorage( FramebufferImageIndex framebufferImageIndex );
+
+    FramebufferImageIndex FrameIndexToFBIndex( FramebufferImageIndex framebufferImageIndex,
+                                                uint32_t              frameIndex ) const;
 
     void CreateDescriptors();
     void CreateSamplers();
@@ -137,7 +144,9 @@ private:
 
     VkDescriptorSetLayout                                 descSetLayout;
     VkDescriptorPool                                      descPool;
-    VkDescriptorSet                                       descSets[ FRAMEBUFFERS_HISTORY_LENGTH ];
+    VkDescriptorSet                                       descSets[ FRAMEBUFFERS_EYE_COUNT ][ FRAMEBUFFERS_HISTORY_LENGTH ];
+
+    uint32_t                                              activeEye{ 0 };
 
     std::list< std::weak_ptr< IFramebuffersDependency > > subscribers;
 };
@@ -208,7 +217,7 @@ inline void Framebuffers::BarrierMultiple(
             .newLayout           = VK_IMAGE_LAYOUT_GENERAL,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image               = images[ fbIndex ],
+            .image               = images[ GetStorageIndex( fbIndex ) ],
             .subresourceRange    = { .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
                                      .baseMipLevel   = 0,
                                      .levelCount     = 1,

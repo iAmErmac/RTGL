@@ -139,9 +139,19 @@ VkCommandBuffer RTGL1::VulkanDevice::BeginFrame( const RgStartFrameInfo& info )
     sceneImportExport->PrepareForFrame( Utils::SafeCstr( info.pMapName ), info.allowMapAutoExport );
 
     {
+        uint32_t renderWidth = swapchain->GetWidth();
+        uint32_t renderHeight = swapchain->GetHeight();
+#if defined(RG_WITH_OPENXR)
+        if( openxr && openxr->IsProjectionActive() )
+        {
+            const VkExtent2D projectionExtent = openxr->GetProjectionExtent();
+            renderWidth = projectionExtent.width;
+            renderHeight = projectionExtent.height;
+        }
+#endif
         renderResolution.Setup( resolution,
-                                swapchain->GetWidth(),
-                                swapchain->GetHeight(),
+                                renderWidth,
+                                renderHeight,
                                 amdFsr2.get(),
                                 swapchain->WithFSR3FrameGeneration() ? amdFsr3dx12.get() : nullptr,
                                 nvDlss2.get(),
@@ -571,31 +581,19 @@ void RTGL1::VulkanDevice::FillUniform( RTGL1::ShGlobalUniform* gu,
     }
 }
 
-auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& drawInfo )
-    -> FramebufferImageIndex
+void RTGL1::VulkanDevice::PrepareRender( VkCommandBuffer& cmd, const RgDrawFrameInfo& drawInfo )
 {
-    // end of "Prepare for frame" label
-    EndCmdLabel( cmd );
-
 
     const uint32_t frameIndex = currentFrameState.GetFrameIndex();
-    const double   timeDelta  = std::max< double >( currentFrameTime - previousFrameTime, 0.0001 );
-    const bool     resetHistory = drawInfo.resetHistory;
-
-
-    const auto& cameraInfo = scene->GetCamera( renderResolution.Aspect() );
 
     bool mipLodBiasUpdated =
         worldSamplerManager->TryChangeMipLodBias( frameIndex, renderResolution.GetMipLodBias() );
-    const RgFloat2D jitter = { uniform->GetData()->jitterX, uniform->GetData()->jitterY };
-
     textureManager->SubmitDescriptors(
         frameIndex, pnext::get< RgDrawFrameTexturesParams >( drawInfo ), mipLodBiasUpdated );
     cubemapManager->SubmitDescriptors( frameIndex );
 
     lightManager->SubmitForFrame( cmd, frameIndex );
 
-    uniform->Upload( cmd, frameIndex );
 
     // submit geometry and upload uniform after getting data from a scene
     scene->SubmitForFrame( cmd,
@@ -604,17 +602,125 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
                            uniform->GetData()->rayCullMaskWorld,
                            drawInfo.disableRayTracedGeometry );
 
-    if( drawInfo.presentPrevFrame )
+
+}
+
+auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& drawInfo )
+    -> FramebufferImageIndex
+{
+    PrepareRender( cmd, drawInfo );
+#if defined(RG_WITH_OPENXR)
+    if( pendingStereoCameraValid && openxr && openxr->IsProjectionActive() && !drawInfo.presentPrevFrame )
     {
-        return m_prevAccum;
+        const uint32_t frameIndex = currentFrameState.GetFrameIndex();
+        restirBuffers->SetActiveEye( 0 );
+        framebuffers->SetActiveEye( 0 );
+        rasterizer->SetActiveEye( 0 );
+        eyeRenderStates[ 0 ].finalImage = RenderEye( cmd, drawInfo, 0 );
+        const auto leftSize = framebuffers->GetFramebufSize( renderResolution.GetResolutionState(), eyeRenderStates[ 0 ].finalImage );
+        openxr->RecordStereoEyeBlit( cmd, 0, framebuffers->GetImage( eyeRenderStates[ 0 ].finalImage, frameIndex ), leftSize );
+        restirBuffers->SetActiveEye( 1 );
+        framebuffers->SetActiveEye( 1 );
+        rasterizer->SetActiveEye( 1 );
+        eyeRenderStates[ 1 ].finalImage = RenderEye( cmd, drawInfo, 1 );
+        const auto rightSize = framebuffers->GetFramebufSize( renderResolution.GetResolutionState(), eyeRenderStates[ 1 ].finalImage );
+        openxr->RecordStereoEyeBlit( cmd, 1, framebuffers->GetImage( eyeRenderStates[ 1 ].finalImage, frameIndex ), rightSize );
+        return eyeRenderStates[ 1 ].finalImage;
     }
+#endif
+    restirBuffers->SetActiveEye( 0 );
+    framebuffers->SetActiveEye( 0 );
+    rasterizer->SetActiveEye( 0 );
+    return drawInfo.presentPrevFrame ? m_prevAccum : RenderEye( cmd, drawInfo, 0 );
+}
+
+auto RTGL1::VulkanDevice::RenderEye( VkCommandBuffer& cmd, const RgDrawFrameInfo& drawInfo, uint32_t eyeIndex )
+    -> FramebufferImageIndex
+{
+    if( fluid )
+    {
+        fluid->SetActiveEye( eyeIndex );
+    }
+#if defined(RG_WITH_OPENXR)
+    const bool stereoRender = pendingStereoCameraValid && openxr && openxr->IsProjectionActive();
+    const uint32_t frameIndex = currentFrameState.GetFrameIndex();
+#else
+    const uint32_t frameIndex = currentFrameState.GetFrameIndex();
+#endif
+#if defined(RG_WITH_OPENXR)
+    const auto& renderUniform = stereoRender ? stereoUniforms[ eyeIndex ] : this->uniform;
+    if( stereoRender )
+    {
+        *renderUniform->GetData() = *this->uniform->GetData();
+    }
+#else
+    const auto& renderUniform = this->uniform;
+#endif
+    const double timeDelta = std::max< double >( currentFrameTime - previousFrameTime, 0.0001 );
+#if defined(RG_WITH_OPENXR)
+    const auto cameraInfo = pendingStereoCameraValid
+        ? scene->BuildCamera( eyeIndex == 0 ? pendingStereoCamera.left : pendingStereoCamera.right )
+        : scene->GetCamera( renderResolution.Aspect() );
+#else
+    const auto cameraInfo = scene->GetCamera( renderResolution.Aspect() );
+#endif
+    const RgFloat2D jitter = { renderUniform->GetData()->jitterX, renderUniform->GetData()->jitterY };
+
+    assert( eyeIndex < eyeRenderStates.size() );
+    auto& eyeState = eyeRenderStates[ eyeIndex ];
+    const bool resetHistory = drawInfo.resetHistory || !eyeState.cameraValid || stereoRender;
+    if( eyeState.cameraValid )
+    {
+        eyeState.previousView = eyeState.view;
+        eyeState.previousProjection = eyeState.projection;
+        eyeState.previousCameraPosition = eyeState.cameraPosition;
+    }
+    std::memcpy( eyeState.view.data(), cameraInfo.view, sizeof( cameraInfo.view ) );
+    std::memcpy( eyeState.projection.data(), cameraInfo.projection, sizeof( cameraInfo.projection ) );
+    const auto cameraPosition = MakeCameraPosition( cameraInfo );
+    std::memcpy( eyeState.cameraPosition.data(), cameraPosition.data, sizeof( eyeState.cameraPosition ) );
+    if( resetHistory )
+    {
+        eyeState.previousView = eyeState.view;
+        eyeState.previousProjection = eyeState.projection;
+        eyeState.previousCameraPosition = eyeState.cameraPosition;
+    }
+    eyeState.resetHistory = resetHistory;
+    eyeState.cameraValid = true;
+
+#if defined(RG_WITH_OPENXR)
+    if( pendingStereoCameraValid )
+    {
+        auto* gu = renderUniform->GetData();
+        std::memcpy( gu->viewPrev, eyeState.previousView.data(), sizeof( gu->viewPrev ) );
+        std::memcpy( gu->projectionPrev, eyeState.previousProjection.data(), sizeof( gu->projectionPrev ) );
+        std::memcpy( gu->view, cameraInfo.view, sizeof( gu->view ) );
+        std::memcpy( gu->projection, cameraInfo.projection, sizeof( gu->projection ) );
+        std::memcpy( gu->invView, cameraInfo.viewInverse, sizeof( gu->invView ) );
+        std::memcpy( gu->invProjection, cameraInfo.projectionInverse, sizeof( gu->invProjection ) );
+        std::memcpy( gu->cameraPositionPrev, eyeState.previousCameraPosition.data(), 3 * sizeof( float ) );
+        std::memcpy( gu->cameraPosition, eyeState.cameraPosition.data(), 3 * sizeof( float ) );
+
+        // The illumination volume maps world positions through its own camera
+        // transform. Keep it in the same asymmetric projection as this eye.
+        Matrix::Multiply( gu->volumeViewProj, gu->view, gu->projection );
+        Matrix::Inverse( gu->volumeViewProjInv, gu->volumeViewProj );
+        std::memcpy( gu->volumeViewProj_Prev, gu->volumeViewProj, sizeof( gu->volumeViewProj ) );
+        std::memcpy( gu->volumeViewProjInv_Prev, gu->volumeViewProjInv, sizeof( gu->volumeViewProjInv ) );
+    }
+#endif
+    renderUniform->Upload( cmd, frameIndex );
+
+    // Mono/cinema uses eye 0. Stereo invokes this sequentially for each eye; a future multiview path keeps this eye identity as its layer index.
+    (void)eyeIndex;
+
 
     if( auto w = pnext::get< RgDrawFramePostEffectsParams >( drawInfo ).pWipe )
     {
         effectWipe->CopyToWipeEffectSourceIfNeeded( cmd, //
                                                     frameIndex,
                                                     *framebuffers,
-                                                    m_prevAccum,
+                                                    stereoRender ? eyeState.previousAccum : m_prevAccum,
                                                     renderResolution.GetResolutionState(),
                                                     w );
     }
@@ -624,9 +730,9 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
         rasterizer->SubmitForFrame( cmd, frameIndex );
 
         // draw rasterized sky to albedo before tracing primary rays
-        if( uniform->GetData()->skyType == RG_SKY_TYPE_RASTERIZED_GEOMETRY )
+        if( renderUniform->GetData()->skyType == RG_SKY_TYPE_RASTERIZED_GEOMETRY )
         {
-            rasterizer->DrawSkyToCubemap( cmd, frameIndex, *textureManager, *uniform );
+            rasterizer->DrawSkyToCubemap( cmd, frameIndex, *textureManager, *renderUniform );
             rasterizer->DrawSkyToAlbedo(
                 cmd,
                 frameIndex,
@@ -652,7 +758,7 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
 
 
     {
-        lightGrid->Build( cmd, frameIndex, uniform, blueNoise, lightManager );
+        lightGrid->Build( cmd, frameIndex, renderUniform, blueNoise, lightManager );
 
         portalList->SubmitForFrame( cmd, frameIndex );
 
@@ -665,7 +771,7 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
                                                         renderResolution.Width(),
                                                         renderResolution.Height(),
                                                         *scene,
-                                                        *uniform,
+                                                        *renderUniform,
                                                         *textureManager,
                                                         framebuffers,
                                                         restirBuffers,
@@ -681,14 +787,14 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
         // draw decals on top of primary surface
         rasterizer->DrawDecals( cmd,
                                 frameIndex,
-                                *uniform,
+                                *renderUniform,
                                 *textureManager,
                                 cameraInfo.view,
                                 cameraInfo.projection,
                                 jitter,
                                 renderResolution );
 
-        if( uniform->GetData()->reflectRefractMaxDepth > 0 )
+        if( renderUniform->GetData()->reflectRefractMaxDepth > 0 )
         {
             pathTracer->TraceReflectionRefractionRays( params );
         }
@@ -699,7 +805,7 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
         pathTracer->TraceIndirectllumination( params );
         pathTracer->TraceVolumetric( params );
 
-        if( fluid )
+        if( fluid && eyeIndex == 0 )
         {
             fluid->Simulate( cmd,
                              frameIndex,
@@ -714,7 +820,7 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
                                                           renderResolution.Width(),
                                                           renderResolution.Height(),
                                                           *scene,
-                                                          *uniform,
+                                                          *renderUniform,
                                                           *textureManager,
                                                           *framebuffers,
                                                           *restirBuffers,
@@ -724,22 +830,21 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
                                                           *rasterizer->GetRenderCubemap(),
                                                           *portalList,
                                                           *volumetric );
-        denoiser->Denoise( cmd, frameIndex, uniform );
+        denoiser->Denoise( cmd, frameIndex, renderUniform );
         volumetric->ProcessScattering(
-            cmd, frameIndex, *uniform, *blueNoise, *framebuffers, volumetricMaxHistoryLen );
-        tonemapping->CalculateExposure( cmd, frameIndex, uniform );
+            cmd, frameIndex, *renderUniform, *blueNoise, *framebuffers, volumetricMaxHistoryLen );
+        tonemapping->CalculateExposure( cmd, frameIndex, renderUniform );
     }
 
-    imageComposition->PrepareForRaster( cmd, frameIndex, uniform.get() );
+    imageComposition->PrepareForRaster( cmd, frameIndex, renderUniform.get() );
     volumetric->BarrierToReadIllumination( cmd );
 
     if( !drawInfo.disableRasterization )
     {
-        // draw rasterized geometry into the final image
         rasterizer->DrawToFinalImage( cmd,
                                       frameIndex,
                                       *textureManager,
-                                      *uniform,
+                                      *renderUniform,
                                       *tonemapping,
                                       *volumetric,
                                       cameraInfo.view,
@@ -751,7 +856,7 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
 
     imageComposition->Finalize( cmd,
                                 frameIndex,
-                                *uniform,
+                                *renderUniform,
                                 *tonemapping,
                                 pnext::get< RgDrawFrameTonemappingParams >( drawInfo ) );
 
@@ -928,7 +1033,7 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
                 frameIndex,
                 accum,
                 *textureManager,
-                *uniform,
+                *renderUniform,
                 *tonemapping,
                 *volumetric,
                 cameraInfo.view,
@@ -950,7 +1055,7 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
         .cmd          = cmd,
         .frameIndex   = frameIndex,
         .framebuffers = framebuffers,
-        .uniform      = uniform,
+        .uniform      = renderUniform,
         .width        = renderResolution.UpscaledWidth(),
         .height       = renderResolution.UpscaledHeight(),
         .currentTime  = float( currentFrameTime ),
@@ -973,7 +1078,7 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
         {
             accum = bloom->Apply( cmd,
                                   frameIndex,
-                                  *uniform,
+                                  *renderUniform,
                                   *tonemapping,
                                   *textureManager,
                                   renderResolution.UpscaledWidth(),
@@ -1001,7 +1106,7 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
         accum = l_applyIf( effectVHS, postef.pVHS, accum );
     }
 
-    // draw geometry such as HUD into an upscaled framebuf
+    // Draw geometry such as HUD into an upscaled framebuffer
     if( !drawInfo.disableRasterization )
     {
         if( !needHudOnly )
@@ -1013,31 +1118,35 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
                                          frameIndex,
                                          accum,
                                          *textureManager,
-                                         uniform->GetData()->view,
-                                         uniform->GetData()->projection,
+                                         renderUniform->GetData()->view,
+                                         renderUniform->GetData()->projection,
                                          renderResolution.UpscaledWidth(),
                                          renderResolution.UpscaledHeight(),
-                                         swapchain->IsHDREnabled() );
+                                         swapchain->IsHDREnabled(), false, stereoRender );
         }
-        else
+        if( stereoRender && eyeIndex == 0 )
+        {
+            rasterizer->DrawToSwapchain( cmd, frameIndex, FB_IMAGE_INDEX_HUD_ONLY, *textureManager, renderUniform->GetData()->view, renderUniform->GetData()->projection, renderResolution.UpscaledWidth(), renderResolution.UpscaledHeight(), swapchain->IsHDREnabled() || stereoRender, true, true );
+            const auto hudSize = framebuffers->GetFramebufSize( renderResolution.GetResolutionState(), FB_IMAGE_INDEX_HUD_ONLY );
+            openxr->RecordHudBlit( cmd, framebuffers->GetImage( FB_IMAGE_INDEX_HUD_ONLY, frameIndex ), hudSize );
+        }
+        else if( !stereoRender )
         {
             rasterizer->DrawToSwapchain( cmd,
                                          frameIndex,
                                          FB_IMAGE_INDEX_HUD_ONLY,
                                          *textureManager,
-                                         uniform->GetData()->view,
-                                         uniform->GetData()->projection,
+                                         renderUniform->GetData()->view,
+                                         renderUniform->GetData()->projection,
                                          renderResolution.UpscaledWidth(),
                                          renderResolution.UpscaledHeight(),
                                          swapchain->IsHDREnabled() );
 
-            FramebufferImageIndex todx12[] = { FB_IMAGE_INDEX_HUD_ONLY };
-            Framebuf_CopyVkToDX12( cmd,
-                                   frameIndex,
-                                   *framebuffers,
-                                   renderResolution.UpscaledWidth(),
-                                   renderResolution.UpscaledHeight(),
-                                   todx12 );
+            if( !openxr )
+            {
+                FramebufferImageIndex todx12[] = { FB_IMAGE_INDEX_HUD_ONLY };
+                Framebuf_CopyVkToDX12( cmd, frameIndex, *framebuffers, renderResolution.UpscaledWidth(), renderResolution.UpscaledHeight(), todx12 );
+            }
         }
     }
 
@@ -1082,7 +1191,10 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
         accum = effectHDRPrepare->Apply( descSets, args, accum );
     }
 
-    m_prevAccum = accum;
+    eyeState.finalImage = accum;
+    eyeState.previousAccum = accum;
+    ++eyeState.historyId;
+    if( !stereoRender ) m_prevAccum = accum;
     return accum;
 }
 
@@ -1175,7 +1287,13 @@ void RTGL1::VulkanDevice::EndFrame( VkCommandBuffer cmd, FramebufferImageIndex r
 #if defined(RG_WITH_OPENXR)
     if( openxr && openxr->IsFrameActive() )
     {
-        openxr->RecordBlit( cmd, framebuffers->GetImage( rendered, frameIndex ), rendered_size );
+        if( pendingStereoCameraValid && openxr->IsProjectionActive() )
+        {
+        }
+        else
+        {
+            openxr->RecordBlit( cmd, framebuffers->GetImage( rendered, frameIndex ), rendered_size );
+        }
     }
 #endif
 
@@ -1368,6 +1486,20 @@ RgResult RTGL1::VulkanDevice::UploadStereoCamera( const RgStereoCameraInfoEXT* p
     if( !pInfo || pInfo->structSize != sizeof(*pInfo) || pInfo->version != RG_OPENXR_PRESENTATION_EXT_VERSION ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
     if( pInfo->left.sType != RG_STRUCTURE_TYPE_CAMERA_INFO || pInfo->right.sType != RG_STRUCTURE_TYPE_CAMERA_INFO ) return RG_RESULT_WRONG_STRUCTURE_TYPE;
     pendingStereoCamera = *pInfo;
+    auto copyView = [ this ]( RgCameraInfo& destination, std::array<float, 16>& ownedView ) {
+        if( destination.pView == nullptr ) return;
+        std::memcpy( ownedView.data(), destination.pView, sizeof( ownedView ) );
+        destination.pView = ownedView.data();
+    };
+    copyView( pendingStereoCamera.left, pendingStereoViews[ 0 ] );
+    copyView( pendingStereoCamera.right, pendingStereoViews[ 1 ] );
+    auto copyProjection = [ this ]( RgCameraInfo& destination, std::array<float, 16>& ownedProjection ) {
+        if( destination.pProjection == nullptr ) return;
+        std::memcpy( ownedProjection.data(), destination.pProjection, sizeof( ownedProjection ) );
+        destination.pProjection = ownedProjection.data();
+    };
+    copyProjection( pendingStereoCamera.left, pendingStereoProjections[ 0 ] );
+    copyProjection( pendingStereoCamera.right, pendingStereoProjections[ 1 ] );
     pendingStereoCameraValid = true;
     return RG_RESULT_SUCCESS;
 }

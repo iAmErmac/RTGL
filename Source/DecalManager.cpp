@@ -432,43 +432,57 @@ void RTGL1::DecalManager::CreateRenderPass()
 
 void RTGL1::DecalManager::CreateFramebuffers( uint32_t width, uint32_t height )
 {
-    for( uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++ )
+    const uint32_t previousEye = storageFramebuffers->GetActiveEye();
+    for( uint32_t eye = 0; eye < FRAMEBUFFERS_EYE_COUNT; eye++ )
     {
-        assert( passFramebuffers[ i ] == VK_NULL_HANDLE );
+        storageFramebuffers->SetActiveEye( eye );
+        for( uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++ )
+        {
+            assert( passFramebuffers[ eye ][ i ] == VK_NULL_HANDLE );
 
-        VkImageView vs[] = {
-            storageFramebuffers->GetImageView( FB_IMAGE_INDEX_ALBEDO, i ),
-            storageFramebuffers->GetImageView( FB_IMAGE_INDEX_NORMAL_DECAL, i ),
-            storageFramebuffers->GetImageView( FB_IMAGE_INDEX_SCREEN_EMISSION, i ),
-        };
+            VkImageView vs[] = {
+                storageFramebuffers->GetImageView( FB_IMAGE_INDEX_ALBEDO, i ),
+                storageFramebuffers->GetImageView( FB_IMAGE_INDEX_NORMAL_DECAL, i ),
+                storageFramebuffers->GetImageView( FB_IMAGE_INDEX_SCREEN_EMISSION, i ),
+            };
 
-        VkFramebufferCreateInfo info = {
-            .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-            .renderPass      = renderPass,
-            .attachmentCount = std::size( vs ),
-            .pAttachments    = vs,
-            .width           = width,
-            .height          = height,
-            .layers          = 1,
-        };
+            VkFramebufferCreateInfo info = {
+                .sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                .renderPass      = renderPass,
+                .attachmentCount = std::size( vs ),
+                .pAttachments    = vs,
+                .width           = width,
+                .height          = height,
+                .layers          = 1,
+            };
 
-        VkResult r = vkCreateFramebuffer( device, &info, nullptr, &passFramebuffers[ i ] );
-        VK_CHECKERROR( r );
+            VkResult r = vkCreateFramebuffer( device, &info, nullptr, &passFramebuffers[ eye ][ i ] );
+            VK_CHECKERROR( r );
+        }
     }
+    storageFramebuffers->SetActiveEye( previousEye );
 }
 
 void RTGL1::DecalManager::DestroyFramebuffers()
 {
-    for( uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++ )
+    for( auto& perEye : passFramebuffers )
     {
-        if( passFramebuffers[ i ] != VK_NULL_HANDLE )
+        for( VkFramebuffer& framebuffer : perEye )
         {
-            vkDestroyFramebuffer( device, passFramebuffers[ i ], nullptr );
-            passFramebuffers[ i ] = VK_NULL_HANDLE;
+            if( framebuffer != VK_NULL_HANDLE )
+            {
+                vkDestroyFramebuffer( device, framebuffer, nullptr );
+                framebuffer = VK_NULL_HANDLE;
+            }
         }
     }
 }
 
+void RTGL1::DecalManager::SetActiveEye( uint32_t eyeIndex )
+{
+    assert( eyeIndex < FRAMEBUFFERS_EYE_COUNT );
+    activeEye = eyeIndex;
+}
 void RTGL1::DecalManager::CreatePipelines( const ShaderManager* shaderManager )
 {
     assert( pipeline == VK_NULL_HANDLE && copyNormalsToAttachment == VK_NULL_HANDLE &&

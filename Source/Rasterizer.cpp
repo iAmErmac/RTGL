@@ -52,8 +52,7 @@ struct RasterizedPushConst
         , manualSrgb( _manualSrgb )
     {
         float model[ 16 ] = RG_MATRIX_TRANSPOSED( info.transform );
-        RTGL1::Matrix::Multiply(
-            vp, model, info.viewProj ? info.viewProj->Get() : defaultViewProj );
+        RTGL1::Matrix::Multiply( vp, model, info.viewProj ? info.viewProj->Get() : defaultViewProj );
     }
 };
 
@@ -187,6 +186,12 @@ RTGL1::Rasterizer::~Rasterizer()
     vkDestroyPipelineLayout( device, swapchainPassPipelineLayout, nullptr );
 }
 
+void RTGL1::Rasterizer::SetActiveEye( uint32_t eyeIndex )
+{
+    rasterPass->SetActiveEye( eyeIndex );
+    decalManager->SetActiveEye( eyeIndex );
+}
+
 void RTGL1::Rasterizer::PrepareForFrame( uint32_t frameIndex )
 {
     collector->Clear( frameIndex );
@@ -277,6 +282,8 @@ struct RasterDrawParams
     std::optional< RasterLensFlares > flaresParams{};
     std::optional< float >            classic{};
     bool                              manualSrgb{ false };
+    bool                              hudOnly{ false };
+    bool                              filterHud{ false };
 };
 
 }
@@ -537,7 +544,9 @@ void RTGL1::Rasterizer::DrawToSwapchain( VkCommandBuffer       cmd,
                                          const float*          proj,
                                          uint32_t              swapchainWidth,
                                          uint32_t              swapchainHeight,
-                                         bool                  isHdr )
+                                         bool                  isHdr,
+                                         bool                  hudOnly,
+                                         bool                  filterHud )
 {
     auto label = CmdLabel{ cmd, "Rasterized to swapchain" };
 
@@ -562,6 +571,8 @@ void RTGL1::Rasterizer::DrawToSwapchain( VkCommandBuffer       cmd,
         .descSets        = sets,
         .defaultViewProj = defaultViewProj,
         .manualSrgb      = ( imageToDrawIn == FB_IMAGE_INDEX_HUD_ONLY && !isHdr ),
+        .hudOnly            = hudOnly,
+        .filterHud          = filterHud,
     };
 
     Draw( cmd, frameIndex, params );
@@ -681,6 +692,7 @@ void RTGL1::Rasterizer::Draw( VkCommandBuffer         cmd,
 
         for( const auto& info : drawParams.drawInfos )
         {
+            if( drawParams.filterHud && drawParams.hudOnly != info.isHud ) continue;
             SetViewportIfNew( cmd, info, defaultViewport, curViewport );
 
             if( drawParams.pipelines )
@@ -692,7 +704,8 @@ void RTGL1::Rasterizer::Draw( VkCommandBuffer         cmd,
             // push const
             {
                 auto push =
-                    RasterizedPushConst{ info, drawParams.defaultViewProj, drawParams.manualSrgb };
+                    RasterizedPushConst{ info,
+                                         drawParams.defaultViewProj, drawParams.manualSrgb };
 
                 vkCmdPushConstants( cmd,
                                     drawParams.pipelines ? drawParams.pipelines->GetPipelineLayout()

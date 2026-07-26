@@ -38,9 +38,14 @@ public:
                        VkQueue queue, uint32_t queueFamilyIndex);
     bool BeginFrame();
     void RecordBlit(VkCommandBuffer cmd, VkImage source, VkExtent2D sourceExtent);
+    void RecordHudBlit(VkCommandBuffer cmd, VkImage source, VkExtent2D sourceExtent);
+    void RecordStereoEyeBlit(VkCommandBuffer cmd, uint32_t eyeIndex, VkImage source, VkExtent2D sourceExtent);
     void FinishFrame();
 
     bool IsFrameActive() const { return frameActive; }
+    bool IsProjectionReady() const { return projectionSwapchain != XR_NULL_HANDLE; }
+    bool IsProjectionActive() const { return requestedPresentationSettings.presentationMode == RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT && projectionSwapchain != XR_NULL_HANDLE; }
+    VkExtent2D GetProjectionExtent() const { return projectionExtent; }
 
 private:
     void LoadLoader();
@@ -52,6 +57,8 @@ private:
     bool LocateHeadPose(XrTime displayTime, XrPosef& pose);
     void UpdateQuadPose(XrTime displayTime);
     void RecreateSwapchainForAspect(float aspect);
+    void RecreateProjectionSwapchain();
+    void DestroyProjectionSwapchain();
     void DestroySession();
     [[noreturn]] void Fail(RgResult result, const char* reason) const;
 
@@ -111,6 +118,9 @@ private:
     XrSpace leftHandSpace = XR_NULL_HANDLE, rightHandSpace = XR_NULL_HANDLE;
     XrSpace headSpace = XR_NULL_HANDLE;
     XrSwapchain swapchain = XR_NULL_HANDLE;
+    // Stereo projection has a distinct two-layer swapchain. The quad
+    // swapchain above remains exclusive to the cinema presentation.
+    XrSwapchain projectionSwapchain = XR_NULL_HANDLE;
     XrActionSet actionSet = XR_NULL_HANDLE;
     XrAction leftStick = XR_NULL_HANDLE, rightStick = XR_NULL_HANDLE;
     XrAction leftPoseAction = XR_NULL_HANDLE, rightPoseAction = XR_NULL_HANDLE;
@@ -125,17 +135,34 @@ private:
     XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
     XrFrameState frameState{XR_TYPE_FRAME_STATE};
     XrCompositionLayerQuad quadLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad hudLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerProjection projectionLayer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+    XrCompositionLayerProjectionView projectionViews[2]{{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
     XrSwapchainImageVulkanKHR* swapchainImages = nullptr;
+    XrSwapchainImageVulkanKHR* projectionSwapchainImages = nullptr;
     uint32_t swapchainImageCount = 0;
+    uint32_t projectionSwapchainImageCount = 0;
     uint32_t swapchainImageIndex = 0;
+    uint32_t projectionSwapchainImageIndex = 0;
+    XrSwapchain activeSwapchain = XR_NULL_HANDLE;
     VkImageLayout swapchainImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageLayout projectionSwapchainImageLayouts[ 2 ] = { VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_UNDEFINED };
     VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D swapchainExtent{};
+    VkExtent2D projectionRecommendedExtent{};
+    VkExtent2D projectionExtent{};
     VkExtent2D lastSourceExtent{};
     float swapchainAspect = 0.0f;
+    float projectionRenderScale = 0.0f;
     bool sessionRunning = false;
     bool frameActive = false;
+    bool shouldRender = false;
     bool imageAcquired = false;
+    bool quadImageAcquired = false;
+    bool projectionImageAcquired = false;
+    bool quadSubmitted = false;
+    bool hudSubmitted = false;
+    bool projectionSubmitted = false;
     RgOpenXRPresentationSettingsEXT requestedPresentationSettings{sizeof(RgOpenXRPresentationSettingsEXT), RG_OPENXR_PRESENTATION_EXT_VERSION, RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT, RG_OPENXR_MIRROR_MODE_LEFT_EYE_EXT, 1.0f, 0.0f, 1.0f, 0};
     uint64_t acceptedPresentationSerial = 0;
     RgOpenXRFrameStateEXT xrFrameState{sizeof(RgOpenXRFrameStateEXT), RG_OPENXR_PRESENTATION_EXT_VERSION};

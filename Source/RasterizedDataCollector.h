@@ -105,6 +105,8 @@ public:
         std::optional< Float16D >   viewProj        = std::nullopt;
         std::optional< VkViewport > viewport        = std::nullopt;
         PipelineStateFlags          pipelineState   = 0;
+        bool                        isFirstPerson  = false;
+        bool                        isHud          = false;
     };
 
 public:

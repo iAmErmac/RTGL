@@ -299,6 +299,8 @@ RgResult OpenXRPresenter::SetPresentationSettings(const RgOpenXRPresentationSett
     if( settings.mirrorMode < RG_OPENXR_MIRROR_MODE_LEFT_EYE_EXT || settings.mirrorMode > RG_OPENXR_MIRROR_MODE_OFF_EXT || settings.eyeRenderScale <= 0.0f ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
     if( settings.requestSerial == acceptedPresentationSerial ) return RG_RESULT_SUCCESS;
     requestedPresentationSettings = settings;
+    if( settings.presentationMode == RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT )
+        RecreateProjectionSwapchain();
     acceptedPresentationSerial = settings.requestSerial;
     return RG_RESULT_SUCCESS;
 }
@@ -603,6 +605,8 @@ void OpenXRPresenter::CreateSession(VkInstance instance, VkPhysicalDevice physic
         swapchainExtent.height = std::max(swapchainExtent.height, view.recommendedImageRectHeight);
     }
 
+    projectionRecommendedExtent = swapchainExtent;
+
     uint32_t formatCount = 0;
     if (enumerateSwapchainFormats(session, 0, &formatCount, nullptr) != XR_SUCCESS || formatCount == 0)
         Fail(RG_RESULT_OPENXR_SWAPCHAIN_ERROR, "OpenXR swapchain format enumeration failed");
@@ -786,6 +790,60 @@ void OpenXRPresenter::RecreateSwapchainForAspect(float aspect)
     quadLayer.subImage.imageRect = {{0, 0}, {static_cast<int32_t>(width), static_cast<int32_t>(height)}};
     quadLayer.size.height = quadLayer.size.width / aspect;
 }
+void OpenXRPresenter::DestroyProjectionSwapchain()
+{
+    if( projectionSwapchain != XR_NULL_HANDLE ) destroySwapchain( projectionSwapchain );
+    delete[] projectionSwapchainImages;
+    projectionSwapchain = XR_NULL_HANDLE;
+    projectionSwapchainImages = nullptr;
+    projectionSwapchainImageCount = 0;
+    projectionExtent = {};
+    projectionRenderScale = 0.0f;
+}
+
+void OpenXRPresenter::RecreateProjectionSwapchain()
+{
+    if( session == XR_NULL_HANDLE || imageAcquired || projectionRecommendedExtent.width == 0 || projectionRecommendedExtent.height == 0 ) return;
+
+    const float scale = std::clamp( requestedPresentationSettings.eyeRenderScale, 0.25f, 2.0f );
+    const VkExtent2D desired{
+        std::max( 1u, static_cast<uint32_t>( std::lround( projectionRecommendedExtent.width * scale ) ) ),
+        std::max( 1u, static_cast<uint32_t>( std::lround( projectionRecommendedExtent.height * scale ) ) ),
+    };
+    if( projectionSwapchain != XR_NULL_HANDLE && projectionExtent.width == desired.width &&
+        projectionExtent.height == desired.height && std::fabs( projectionRenderScale - scale ) < 0.0001f ) return;
+
+    DestroyProjectionSwapchain();
+    XrSwapchainCreateInfo info{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
+    info.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+    info.format = swapchainFormat;
+    info.sampleCount = 1;
+    info.width = desired.width;
+    info.height = desired.height;
+    info.faceCount = 1;
+    info.arraySize = 2;
+    info.mipCount = 1;
+    if( createSwapchain( session, &info, &projectionSwapchain ) != XR_SUCCESS )
+    {
+        projectionSwapchain = XR_NULL_HANDLE;
+        return;
+    }
+    if( enumerateSwapchainImages( projectionSwapchain, 0, &projectionSwapchainImageCount, nullptr ) != XR_SUCCESS || projectionSwapchainImageCount == 0 )
+    {
+        DestroyProjectionSwapchain();
+        return;
+    }
+    projectionSwapchainImages = new XrSwapchainImageVulkanKHR[ projectionSwapchainImageCount ];
+    for( uint32_t i = 0; i < projectionSwapchainImageCount; ++i ) projectionSwapchainImages[ i ] = { XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR };
+    if( enumerateSwapchainImages( projectionSwapchain, projectionSwapchainImageCount, &projectionSwapchainImageCount,
+                                  reinterpret_cast<XrSwapchainImageBaseHeader*>( projectionSwapchainImages ) ) != XR_SUCCESS )
+    {
+        DestroyProjectionSwapchain();
+        return;
+    }
+    projectionExtent = desired;
+    projectionRenderScale = scale;
+}
 bool OpenXRPresenter::BeginFrame()
 {
     if (session == XR_NULL_HANDLE) return false;
@@ -807,16 +865,7 @@ bool OpenXRPresenter::BeginFrame()
     if (waitFrame(session, &waitInfo, &frameState) != XR_SUCCESS)
         Fail(RG_RESULT_OPENXR_FRAME_ERROR, "OpenXR frame wait failed");
 
-    xrFrameState.sessionRunning = sessionRunning;
-    xrFrameState.focused = sessionState == XR_SESSION_STATE_FOCUSED;
-    xrFrameState.frameValid = RG_TRUE;
-    xrFrameState.predictedDisplayTime = static_cast<int64_t>(frameState.predictedDisplayTime);
-    xrFrameState.requestedPresentationMode = requestedPresentationSettings.presentationMode;
-    xrFrameState.requestedMirrorMode = requestedPresentationSettings.mirrorMode;
-    xrFrameState.activePresentationMode = RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT;
-    xrFrameState.activeMirrorMode = RG_OPENXR_MIRROR_MODE_OFF_EXT;
-    xrFrameState.fallbackReason = requestedPresentationSettings.presentationMode == RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT ? RG_OPENXR_PRESENTATION_FALLBACK_NOT_READY_EXT : RG_OPENXR_PRESENTATION_FALLBACK_NONE_EXT;
-    xrFrameState = {sizeof(RgOpenXRFrameStateEXT), RG_OPENXR_PRESENTATION_EXT_VERSION};
+
     UpdateQuadPose(frameState.predictedDisplayTime);
     XrViewState viewState{XR_TYPE_VIEW_STATE};
     XrViewLocateInfo viewLocateInfo{XR_TYPE_VIEW_LOCATE_INFO};
@@ -836,22 +885,21 @@ bool OpenXRPresenter::BeginFrame()
             out.pose.orientation = {{view.pose.orientation.x, view.pose.orientation.y, view.pose.orientation.z, view.pose.orientation.w}};
             out.pose.valid = RG_TRUE;
             out.fieldOfView[0] = view.fov.angleLeft; out.fieldOfView[1] = view.fov.angleRight; out.fieldOfView[2] = view.fov.angleUp; out.fieldOfView[3] = view.fov.angleDown;
-            const float l = std::tan(view.fov.angleLeft), r = std::tan(view.fov.angleRight), u = std::tan(view.fov.angleUp), d = std::tan(view.fov.angleDown);
+            const float fovAdjustment = std::clamp(requestedPresentationSettings.fovAdjustment * 0.01745329252f, -0.5f, 0.5f);
+            const float l = std::tan(std::clamp(view.fov.angleLeft - fovAdjustment, -1.569f, 1.569f));
+            const float r = std::tan(std::clamp(view.fov.angleRight + fovAdjustment, -1.569f, 1.569f));
+            const float u = std::tan(std::clamp(view.fov.angleUp + fovAdjustment, -1.569f, 1.569f));
+            const float d = std::tan(std::clamp(view.fov.angleDown - fovAdjustment, -1.569f, 1.569f));
             const float n = 0.01f, f = 1000.0f;
             std::fill(std::begin(out.projection), std::end(out.projection), 0.0f);
-            out.projection[0] = 2.0f / (r - l); out.projection[5] = 2.0f / (u - d); out.projection[8] = (r + l) / (r - l); out.projection[9] = (u + d) / (u - d); out.projection[10] = -(f + n) / (f - n); out.projection[11] = -1.0f; out.projection[14] = -(2.0f * f * n) / (f - n);
+            out.projection[0] = 2.0f / (r - l); out.projection[5] = -2.0f / (u - d); out.projection[8] = (r + l) / (r - l); out.projection[9] = -(u + d) / (u - d); out.projection[10] = f / (n - f); out.projection[11] = -1.0f; out.projection[14] = (f * n) / (n - f);
         }
     }
     XrFrameBeginInfo frameBeginInfo{XR_TYPE_FRAME_BEGIN_INFO};
+    shouldRender = frameState.shouldRender == XR_TRUE;
     if (beginFrame(session, &frameBeginInfo) != XR_SUCCESS)
         Fail(RG_RESULT_OPENXR_FRAME_ERROR, "OpenXR frame begin failed");
-    XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-    XrSwapchainImageWaitInfo swapchainWaitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-    swapchainWaitInfo.timeout = XR_INFINITE_DURATION;
-    if (acquireSwapchainImage(swapchain, &acquireInfo, &swapchainImageIndex) != XR_SUCCESS ||
-        waitSwapchainImage(swapchain, &swapchainWaitInfo) != XR_SUCCESS)
-        Fail(RG_RESULT_OPENXR_FRAME_ERROR, "OpenXR swapchain acquire failed");
-    imageAcquired = true;
+
     frameActive = true;
     inputSnapshot = {};
     inputSnapshot.structSize = sizeof(inputSnapshot);
@@ -875,15 +923,32 @@ bool OpenXRPresenter::BeginFrame()
     }
     xrFrameState.requestedPresentationMode = requestedPresentationSettings.presentationMode;
     xrFrameState.requestedMirrorMode = requestedPresentationSettings.mirrorMode;
-    xrFrameState.activePresentationMode = RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT;
-    xrFrameState.activeMirrorMode = RG_OPENXR_MIRROR_MODE_OFF_EXT;
-    xrFrameState.fallbackReason = requestedPresentationSettings.presentationMode == RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT ? RG_OPENXR_PRESENTATION_FALLBACK_NOT_READY_EXT : RG_OPENXR_PRESENTATION_FALLBACK_NONE_EXT;
+    const bool projectionReady = requestedPresentationSettings.presentationMode == RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT &&
+        projectionSwapchain != XR_NULL_HANDLE && projectionSwapchainImageCount > 0 && viewCount >= 2;
+    xrFrameState.activePresentationMode = projectionReady
+        ? RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT
+        : RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT;
+    xrFrameState.activeMirrorMode = projectionReady ? requestedPresentationSettings.mirrorMode : RG_OPENXR_MIRROR_MODE_OFF_EXT;
+    xrFrameState.fallbackReason = projectionReady || requestedPresentationSettings.presentationMode == RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT
+        ? RG_OPENXR_PRESENTATION_FALLBACK_NONE_EXT : RG_OPENXR_PRESENTATION_FALLBACK_NOT_READY_EXT;
     return true;
 }
 
 void OpenXRPresenter::RecordBlit(VkCommandBuffer cmd, VkImage source, VkExtent2D sourceExtent)
 {
-    if (!frameActive || !imageAcquired) return;
+    if (!frameActive) return;
+    if (!imageAcquired) {
+        XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+        waitInfo.timeout = XR_INFINITE_DURATION;
+        if (acquireSwapchainImage(swapchain, &acquireInfo, &swapchainImageIndex) != XR_SUCCESS ||
+            waitSwapchainImage(swapchain, &waitInfo) != XR_SUCCESS)
+            Fail(RG_RESULT_OPENXR_FRAME_ERROR, "OpenXR quad swapchain acquire failed");
+        imageAcquired = true;
+        quadImageAcquired = true;
+        activeSwapchain = swapchain;
+    }
+    if (activeSwapchain != swapchain) return;
     lastSourceExtent = sourceExtent;
     VkImage destination = swapchainImages[swapchainImageIndex].image;
     VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -911,26 +976,110 @@ void OpenXRPresenter::RecordBlit(VkCommandBuffer cmd, VkImage source, VkExtent2D
     swapchainImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
+void OpenXRPresenter::RecordHudBlit(VkCommandBuffer cmd, VkImage source, VkExtent2D sourceExtent)
+{
+    if( !frameActive || !shouldRender ) return;
+    RecordBlit( cmd, source, sourceExtent );
+    if( !quadImageAcquired ) return;
+    XrPosef headPose{};
+    if( !LocateHeadPose( frameState.predictedDisplayTime, headPose ) ) return;
+    hudLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+    hudLayer.space = space;
+    hudLayer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    hudLayer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    const XrVector3f offset = RotateVector( headPose.orientation, { 0, 0, -1.0f } );
+    hudLayer.pose = { NormalizeQuaternion( headPose.orientation ), { headPose.position.x + offset.x, headPose.position.y + offset.y - 0.30f, headPose.position.z + offset.z } };
+    hudLayer.size = { 1.0f, sourceExtent.width > 0 ? float( sourceExtent.height ) / float( sourceExtent.width ) : 1.0f };
+    hudLayer.subImage.swapchain = swapchain;
+    hudLayer.subImage.imageRect = {{ 0, 0 }, { int32_t( swapchainExtent.width ), int32_t( swapchainExtent.height ) }};
+    hudSubmitted = true;
+}
+void OpenXRPresenter::RecordStereoEyeBlit(VkCommandBuffer cmd, uint32_t eyeIndex, VkImage source, VkExtent2D sourceExtent)
+{
+    if( !frameActive || !shouldRender || projectionSwapchain == XR_NULL_HANDLE || eyeIndex > 1 ) return;
+    if( eyeIndex == 0 )
+    {
+        if( projectionImageAcquired ) return;
+        XrSwapchainImageAcquireInfo acquireInfo{ XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+        XrSwapchainImageWaitInfo waitInfo{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+        waitInfo.timeout = XR_INFINITE_DURATION;
+        if( acquireSwapchainImage( projectionSwapchain, &acquireInfo, &projectionSwapchainImageIndex ) != XR_SUCCESS ||
+            waitSwapchainImage( projectionSwapchain, &waitInfo ) != XR_SUCCESS )
+            Fail( RG_RESULT_OPENXR_FRAME_ERROR, "OpenXR projection swapchain acquire failed" );
+        projectionImageAcquired = true;
+        activeSwapchain = projectionSwapchain;
+    }
+    if( !projectionImageAcquired || activeSwapchain != projectionSwapchain ) return;
+
+    VkImage destination = projectionSwapchainImages[ projectionSwapchainImageIndex ].image;
+    VkImageSubresourceRange srcRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    VkImageSubresourceRange dstRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, eyeIndex, 1 };
+    VkImageMemoryBarrier barriers[ 2 ] = {};
+    barriers[ 0 ] = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+        VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, source, srcRange };
+    barriers[ 1 ] = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+        projectionSwapchainImageLayouts[ eyeIndex ], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, dstRange };
+    vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers );
+    const float sourceAspect = float( sourceExtent.width ) / float( sourceExtent.height );
+    const float targetAspect = float( projectionExtent.width ) / float( projectionExtent.height );
+    const int32_t targetWidth = targetAspect > sourceAspect ? int32_t( std::lround( float( projectionExtent.height ) * sourceAspect ) ) : int32_t( projectionExtent.width );
+    const int32_t targetHeight = targetAspect > sourceAspect ? int32_t( projectionExtent.height ) : int32_t( std::lround( float( projectionExtent.width ) / sourceAspect ) );
+    const int32_t targetX = ( int32_t( projectionExtent.width ) - targetWidth ) / 2;
+    const int32_t targetY = ( int32_t( projectionExtent.height ) - targetHeight ) / 2;
+    const VkClearColorValue black{};
+    vkCmdClearColorImage( cmd, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &dstRange );
+    VkImageBlit region{};
+    region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.srcOffsets[ 1 ] = { int32_t( sourceExtent.width ), int32_t( sourceExtent.height ), 1 };
+    region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, eyeIndex, 1 };
+    region.dstOffsets[ 0 ] = { targetX, targetY, 0 };
+    region.dstOffsets[ 1 ] = { targetX + targetWidth, targetY + targetHeight, 1 };
+    vkCmdBlitImage( cmd, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR );
+    barriers[ 0 ].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; barriers[ 0 ].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barriers[ 0 ].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; barriers[ 0 ].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barriers[ 1 ].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; barriers[ 1 ].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barriers[ 1 ].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; barriers[ 1 ].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers );
+    projectionSwapchainImageLayouts[ eyeIndex ] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    if( eyeIndex == 1 )
+    {
+        projectionLayer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION }; projectionLayer.space = space; projectionLayer.viewCount = 2; projectionLayer.views = projectionViews;
+        for( uint32_t eye = 0; eye < 2; ++eye ) { projectionViews[ eye ] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }; projectionViews[ eye ].pose = locatedViews[ eye ].pose; projectionViews[ eye ].fov = locatedViews[ eye ].fov; projectionViews[ eye ].subImage.swapchain = projectionSwapchain; projectionViews[ eye ].subImage.imageArrayIndex = eye; projectionViews[ eye ].subImage.imageRect = {{ 0, 0 }, { int32_t( projectionExtent.width ), int32_t( projectionExtent.height ) }}; }
+        projectionSubmitted = true;
+    }
+}
 void OpenXRPresenter::FinishFrame()
 {
     if (!frameActive) return;
-    if (imageAcquired) {
-        XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-        if (releaseSwapchainImage(swapchain, &releaseInfo) != XR_SUCCESS)
-            Fail(RG_RESULT_OPENXR_PRESENTATION_ERROR, "OpenXR swapchain release failed");
-    }
-    imageAcquired = false;
-    const XrCompositionLayerBaseHeader* layers[] = {reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quadLayer)};
+    XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+    if( projectionImageAcquired && releaseSwapchainImage( projectionSwapchain, &releaseInfo ) != XR_SUCCESS )
+        Fail( RG_RESULT_OPENXR_PRESENTATION_ERROR, "OpenXR projection swapchain release failed" );
+    if( quadImageAcquired && releaseSwapchainImage( swapchain, &releaseInfo ) != XR_SUCCESS )
+        Fail( RG_RESULT_OPENXR_PRESENTATION_ERROR, "OpenXR quad swapchain release failed" );
+    const XrCompositionLayerBaseHeader* layers[ 2 ]{};
+    uint32_t layerCount = 0;
+    if( projectionSubmitted ) layers[ layerCount++ ] = reinterpret_cast< const XrCompositionLayerBaseHeader* >( &projectionLayer );
+    if( hudSubmitted ) layers[ layerCount++ ] = reinterpret_cast< const XrCompositionLayerBaseHeader* >( &hudLayer );
+    else if( quadSubmitted || ( !projectionSubmitted && quadImageAcquired ) ) layers[ layerCount++ ] = reinterpret_cast< const XrCompositionLayerBaseHeader* >( &quadLayer );
     XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
     endInfo.displayTime = frameState.predictedDisplayTime;
     endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-    endInfo.layerCount = 1;
-    endInfo.layers = layers;
+    endInfo.layerCount = layerCount;
+    endInfo.layers = layerCount > 0 ? layers : nullptr;
     if (endFrame(session, &endInfo) != XR_SUCCESS)
         Fail(RG_RESULT_OPENXR_PRESENTATION_ERROR, "OpenXR frame submission failed");
+    imageAcquired = false;
+    quadImageAcquired = false;
+    projectionImageAcquired = false;
+    quadSubmitted = false;
+    hudSubmitted = false;
+    activeSwapchain = XR_NULL_HANDLE;
+    projectionSubmitted = false;
+    quadLayer.space = space;
+    quadLayer.layerFlags = 0;
     frameActive = false;
 }
-
 void OpenXRPresenter::DestroySession()
 {
     if (session != XR_NULL_HANDLE) {
@@ -938,6 +1087,7 @@ void OpenXRPresenter::DestroySession()
         if (headSpace != XR_NULL_HANDLE) destroySpace(headSpace);
         if (space != XR_NULL_HANDLE) destroySpace(space);
         if (swapchain != XR_NULL_HANDLE) destroySwapchain(swapchain);
+        DestroyProjectionSwapchain();
         destroySession(session);
     }
     delete[] swapchainImages;

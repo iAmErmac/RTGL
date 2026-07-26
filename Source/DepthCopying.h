@@ -51,7 +51,9 @@ public:
                            uint32_t            height,
                            bool                justClear );
 
-    void          CreateFramebuffers( VkImageView depthAttchView,
+    void SetActiveEye( uint32_t eyeIndex );
+
+    void          CreateFramebuffers( const VkImageView depthAttchViews[ FRAMEBUFFERS_EYE_COUNT ],
                                       uint32_t    width,
                                       uint32_t    height );
     void          DestroyFramebuffers();
@@ -67,7 +69,8 @@ private:
     VkDevice         device;
 
     VkRenderPass     renderPass;
-    VkFramebuffer    framebuffer;
+    VkFramebuffer    framebuffers[ FRAMEBUFFERS_EYE_COUNT ]{};
+    uint32_t         activeEye{ 0 };
 
     VkPipelineLayout pipelineLayout;
     VkPipeline       pipeline;
