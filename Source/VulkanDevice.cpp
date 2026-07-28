@@ -1533,6 +1533,14 @@ RgResult RTGL1::VulkanDevice::GetOpenXRInputSnapshotEXT(RgOpenXRInputSnapshotEXT
 #endif
     return RG_RESULT_SUCCESS;
 }
+RgResult RTGL1::VulkanDevice::ApplyOpenXRHapticFeedbackEXT(uint32_t hand, float durationSeconds, float amplitude)
+{
+#if defined(RG_WITH_OPENXR)
+    if (openxr) return openxr->ApplyHapticFeedback(hand, durationSeconds, amplitude);
+#endif
+    return RG_RESULT_OPENXR_SESSION_ERROR;
+}
+
 RgResult RTGL1::VulkanDevice::UploadStereoCamera( const RgStereoCameraInfoEXT* pInfo )
 {
     if( !pInfo || pInfo->structSize != sizeof(*pInfo) || pInfo->version != RG_OPENXR_PRESENTATION_EXT_VERSION ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;

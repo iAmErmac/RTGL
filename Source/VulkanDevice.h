@@ -107,6 +107,7 @@ public:
     void DrawFrame( const RgDrawFrameInfo* pInfo );
     RgResult SetOpenXRVirtualScreenSettings( const RgOpenXRVirtualScreenSettingsEXT* pInfo );
     RgResult GetOpenXRInputSnapshotEXT( RgOpenXRInputSnapshotEXT* pSnapshot ) const;
+    RgResult ApplyOpenXRHapticFeedbackEXT( uint32_t hand, float durationSeconds, float amplitude );
     RgResult SetOpenXRPresentationSettings( const RgOpenXRPresentationSettingsEXT* pInfo );
     RgResult GetOpenXRFrameState( RgOpenXRFrameStateEXT* pState ) const;
 

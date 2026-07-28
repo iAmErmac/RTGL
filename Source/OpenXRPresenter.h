@@ -30,6 +30,7 @@ public:
     const std::vector<const char*>& RequiredDeviceExtensions() const { return deviceExtensions; }
     VkPhysicalDevice GetPreferredPhysicalDevice(VkInstance instance) const;
 
+    RgResult ApplyHapticFeedback(uint32_t hand, float durationSeconds, float amplitude);
     RgResult SetVirtualScreenSettings(const RgOpenXRVirtualScreenSettingsEXT& settings);
     RgResult GetInputSnapshot(RgOpenXRInputSnapshotEXT& snapshot) const;
     RgResult SetPresentationSettings(const RgOpenXRPresentationSettingsEXT& settings);
@@ -104,6 +105,8 @@ private:
     PFN_xrDestroyActionSet destroyActionSet = nullptr;
     PFN_xrCreateAction createAction = nullptr;
     PFN_xrDestroyAction destroyAction = nullptr;
+    PFN_xrApplyHapticFeedback applyHapticFeedback = nullptr;
+    PFN_xrStopHapticFeedback stopHapticFeedback = nullptr;
     PFN_xrSuggestInteractionProfileBindings suggestBindings = nullptr;
     PFN_xrAttachSessionActionSets attachActionSets = nullptr;
     PFN_xrSyncActions syncActions = nullptr;
@@ -130,6 +133,7 @@ private:
     XrAction leftGrip = XR_NULL_HANDLE, rightGrip = XR_NULL_HANDLE;
     XrAction leftGripClick = XR_NULL_HANDLE, rightGripClick = XR_NULL_HANDLE;
     XrAction leftMenu = XR_NULL_HANDLE, rightMenu = XR_NULL_HANDLE;
+    XrAction hapticAction = XR_NULL_HANDLE;
     XrAction leftFaceX = XR_NULL_HANDLE, rightFaceX = XR_NULL_HANDLE;
     XrAction leftFaceY = XR_NULL_HANDLE, rightFaceY = XR_NULL_HANDLE;
     XrAction leftThumbClick = XR_NULL_HANDLE, rightThumbClick = XR_NULL_HANDLE;

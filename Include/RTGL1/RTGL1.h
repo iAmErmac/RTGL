@@ -307,6 +307,9 @@ typedef struct RgOpenXREyeFrameStateEXT { RgOpenXRPoseEXT pose; float fieldOfVie
 typedef struct RgOpenXRFrameStateEXT { uint32_t structSize; uint32_t version; uint32_t capabilities; RgBool32 sessionRunning; RgBool32 focused; RgBool32 frameValid; int64_t predictedDisplayTime; RgOpenXRPoseEXT headPose; RgOpenXREyeFrameStateEXT eyes[2]; RgOpenXRPresentationModeEXT requestedPresentationMode; RgOpenXRPresentationModeEXT activePresentationMode; RgOpenXRMirrorModeEXT requestedMirrorMode; RgOpenXRMirrorModeEXT activeMirrorMode; RgOpenXRPresentationFallbackReasonEXT fallbackReason; } RgOpenXRFrameStateEXT;
 
 typedef RgResult ( RGAPI_PTR* PFN_rgGetOpenXRInputSnapshotEXT )( RgOpenXRInputSnapshotEXT* pSnapshot );
+typedef RgResult ( RGAPI_PTR* PFN_rgApplyOpenXRHapticFeedbackEXT )( uint32_t hand, float durationSeconds, float amplitude );
+RGAPI RgResult RGAPI_CALL rgApplyOpenXRHapticFeedbackEXT( uint32_t hand, float durationSeconds, float amplitude );
+
 RGAPI RgResult RGAPI_CALL rgGetOpenXRInputSnapshotEXT( RgOpenXRInputSnapshotEXT* pSnapshot );
 
 typedef struct RgInstanceCreateInfo
@@ -1381,6 +1384,7 @@ typedef struct RgInterface
     PFN_rgSetOpenXRVirtualScreenSettingsEXT rgSetOpenXRVirtualScreenSettingsEXT;
     PFN_rgSetOpenXRPresentationSettingsEXT rgSetOpenXRPresentationSettingsEXT;
     PFN_rgGetOpenXRFrameStateEXT rgGetOpenXRFrameStateEXT;
+    PFN_rgApplyOpenXRHapticFeedbackEXT rgApplyOpenXRHapticFeedbackEXT;
     PFN_rgUploadStereoCameraEXT            rgUploadStereoCameraEXT;
 } RgInterface;
 

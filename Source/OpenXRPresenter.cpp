@@ -304,6 +304,24 @@ RgResult OpenXRPresenter::SetPresentationSettings(const RgOpenXRPresentationSett
     acceptedPresentationSerial = settings.requestSerial;
     return RG_RESULT_SUCCESS;
 }
+RgResult OpenXRPresenter::ApplyHapticFeedback(uint32_t hand, float durationSeconds, float amplitude)
+{
+    if (!applyHapticFeedback || !stopHapticFeedback || session == XR_NULL_HANDLE ||
+        hapticAction == XR_NULL_HANDLE || !sessionRunning || hand > 1)
+        return RG_RESULT_OPENXR_SESSION_ERROR;
+    XrHapticActionInfo actionInfo{XR_TYPE_HAPTIC_ACTION_INFO};
+    actionInfo.action = hapticAction;
+    actionInfo.subactionPath = hand == 0 ? leftHandPath : rightHandPath;
+    if (durationSeconds <= 0.0f || amplitude <= 0.0f)
+        return stopHapticFeedback(session, &actionInfo) == XR_SUCCESS ? RG_RESULT_SUCCESS : RG_RESULT_OPENXR_SESSION_ERROR;
+    XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+    vibration.duration = static_cast<XrDuration>(std::clamp(durationSeconds, 0.001f, 10.0f) * 1000000000.0f);
+    vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+    vibration.amplitude = std::clamp(amplitude, 0.0f, 1.0f);
+    return applyHapticFeedback(session, &actionInfo, reinterpret_cast<const XrHapticBaseHeader*>(&vibration)) == XR_SUCCESS
+        ? RG_RESULT_SUCCESS
+        : RG_RESULT_OPENXR_SESSION_ERROR;
+}
 RgResult OpenXRPresenter::GetFrameState(RgOpenXRFrameStateEXT& state) const
 {
     state = xrFrameState;
@@ -340,6 +358,7 @@ void OpenXRPresenter::InitializeActions()
     make("face_x", XR_ACTION_TYPE_BOOLEAN_INPUT, leftFaceX, rightFaceX);
     make("face_y", XR_ACTION_TYPE_BOOLEAN_INPUT, leftFaceY, rightFaceY);
     make("thumb_click", XR_ACTION_TYPE_BOOLEAN_INPUT, leftThumbClick, rightThumbClick);
+    make("haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, hapticAction, hapticAction);
     XrPath touchProfile = XR_NULL_PATH;
     stringToPath(xrInstance, "/interaction_profiles/oculus/touch_controller", &touchProfile);
     auto path = [&](const char* value) { XrPath result = XR_NULL_PATH; stringToPath(xrInstance, value, &result); return result; };
@@ -353,6 +372,8 @@ void OpenXRPresenter::InitializeActions()
         {leftFaceX, path("/user/hand/left/input/x/click")}, {rightFaceX, path("/user/hand/right/input/a/click")},
         {leftFaceY, path("/user/hand/left/input/y/click")}, {rightFaceY, path("/user/hand/right/input/b/click")},
         {leftThumbClick, path("/user/hand/left/input/thumbstick/click")}, {rightThumbClick, path("/user/hand/right/input/thumbstick/click")},
+        {hapticAction, path("/user/hand/left/output/haptic")}, {hapticAction, path("/user/hand/right/output/haptic")},
+
     };
     XrInteractionProfileSuggestedBinding suggested{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
     suggested.interactionProfile = touchProfile;
@@ -379,7 +400,8 @@ void OpenXRPresenter::InitializeActions()
         {leftFaceX, "/user/hand/left/input/x/click"}, {rightFaceX, "/user/hand/right/input/a/click"},
         {leftFaceY, "/user/hand/left/input/y/click"}, {rightFaceY, "/user/hand/right/input/b/click"},
         {leftThumbClick, "/user/hand/left/input/thumbstick/click"}, {rightThumbClick, "/user/hand/right/input/thumbstick/click"},
-        {leftPoseAction, "/user/hand/left/input/aim/pose"}, {rightPoseAction, "/user/hand/right/input/aim/pose"}
+        {leftPoseAction, "/user/hand/left/input/aim/pose"}, {rightPoseAction, "/user/hand/right/input/aim/pose"},
+        {hapticAction, "/user/hand/left/output/haptic"}, {hapticAction, "/user/hand/right/output/haptic"}
     });
     suggestProfile("/interaction_profiles/valve/index_controller", {
         {leftStick, "/user/hand/left/input/thumbstick"}, {rightStick, "/user/hand/right/input/thumbstick"},
@@ -388,7 +410,8 @@ void OpenXRPresenter::InitializeActions()
         {leftGripClick, "/user/hand/left/input/squeeze/click"}, {rightGripClick, "/user/hand/right/input/squeeze/click"},
 
         {leftThumbClick, "/user/hand/left/input/thumbstick/click"}, {rightThumbClick, "/user/hand/right/input/thumbstick/click"},
-        {leftPoseAction, "/user/hand/left/input/aim/pose"}, {rightPoseAction, "/user/hand/right/input/aim/pose"}
+        {leftPoseAction, "/user/hand/left/input/aim/pose"}, {rightPoseAction, "/user/hand/right/input/aim/pose"},
+        {hapticAction, "/user/hand/left/output/haptic"}, {hapticAction, "/user/hand/right/output/haptic"}
     });
     suggestProfile("/interaction_profiles/microsoft/motion_controller", {
         {leftStick, "/user/hand/left/input/thumbstick"}, {rightStick, "/user/hand/right/input/thumbstick"},
@@ -396,7 +419,8 @@ void OpenXRPresenter::InitializeActions()
         {leftGrip, "/user/hand/left/input/squeeze/value"}, {rightGrip, "/user/hand/right/input/squeeze/value"},
         {leftGripClick, "/user/hand/left/input/squeeze/click"}, {rightGripClick, "/user/hand/right/input/squeeze/click"},
 
-        {leftPoseAction, "/user/hand/left/input/aim/pose"}, {rightPoseAction, "/user/hand/right/input/aim/pose"}
+        {leftPoseAction, "/user/hand/left/input/aim/pose"}, {rightPoseAction, "/user/hand/right/input/aim/pose"},
+        {hapticAction, "/user/hand/left/output/haptic"}, {hapticAction, "/user/hand/right/output/haptic"}
     });
 
 }
@@ -540,6 +564,8 @@ void OpenXRPresenter::LoadInstanceFunctions()
     LOAD_XR(xrGetActionStateVector2f, getActionStateVector2f);
     LOAD_XR(xrGetActionStateBoolean, getActionStateBoolean);
     LOAD_XR(xrCreateActionSpace, createActionSpace);
+    LOAD_XR(xrApplyHapticFeedback, applyHapticFeedback);
+    LOAD_XR(xrStopHapticFeedback, stopHapticFeedback);
     LOAD_XR_OPTIONAL(xrGetVulkanInstanceExtensionsKHR, getVulkanInstanceExtensions);
     LOAD_XR_OPTIONAL(xrGetVulkanDeviceExtensionsKHR, getVulkanDeviceExtensions);
     LOAD_XR_OPTIONAL(xrGetVulkanGraphicsRequirements2KHR, getVulkanGraphicsRequirements2);

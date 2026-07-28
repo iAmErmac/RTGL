@@ -310,6 +310,10 @@ RGAPI RgResult RGAPI_CALL rgGetOpenXRInputSnapshotEXT( RgOpenXRInputSnapshotEXT*
 {
     return Call( [ & ]( Device& d ) { return d.GetOpenXRInputSnapshotEXT( pSnapshot ); } );
 }
+RGAPI RgResult RGAPI_CALL rgApplyOpenXRHapticFeedbackEXT( uint32_t hand, float durationSeconds, float amplitude )
+{
+    return Call( [ & ]( Device& d ) { return d.ApplyOpenXRHapticFeedbackEXT( hand, durationSeconds, amplitude ); } );
+}
 RGAPI RgResult RGCONV RGAPI_CALL rgCreateInstance( const RgInstanceCreateInfo* pInfo,
                                                    RgInterface*                pInterface )
 {
@@ -378,6 +382,7 @@ RGAPI RgResult RGCONV RGAPI_CALL rgCreateInstance( const RgInstanceCreateInfo* p
             .rgSetOpenXRVirtualScreenSettingsEXT = rgSetOpenXRVirtualScreenSettingsEXT,
             .rgSetOpenXRPresentationSettingsEXT = rgSetOpenXRPresentationSettingsEXT,
             .rgGetOpenXRFrameStateEXT = rgGetOpenXRFrameStateEXT,
+            .rgApplyOpenXRHapticFeedbackEXT = rgApplyOpenXRHapticFeedbackEXT,
             .rgUploadStereoCameraEXT = rgUploadStereoCameraEXT,
         };
 
