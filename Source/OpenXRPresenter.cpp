@@ -331,7 +331,6 @@ void OpenXRPresenter::InitializeActions()
         return true;
     };
     // A single action with both hand paths is required by several OpenXR runtimes.
-    // This matches DoomXR's working action model and is queried per hand below.
     make("stick", XR_ACTION_TYPE_VECTOR2F_INPUT, leftStick, rightStick);
     make("pose", XR_ACTION_TYPE_POSE_INPUT, leftPoseAction, rightPoseAction);
     make("trigger", XR_ACTION_TYPE_FLOAT_INPUT, leftTrigger, rightTrigger);
@@ -1018,14 +1017,15 @@ void OpenXRPresenter::RecordStereoEyeBlit(VkCommandBuffer cmd, uint32_t eyeIndex
     }
     if( !projectionImageAcquired || activeSwapchain != projectionSwapchain ) return;
 
+    const uint32_t physicalEye = requestedPresentationSettings.swapEyes ? 1u - eyeIndex : eyeIndex;
     VkImage destination = projectionSwapchainImages[ projectionSwapchainImageIndex ].image;
     VkImageSubresourceRange srcRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    VkImageSubresourceRange dstRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, eyeIndex, 1 };
+    VkImageSubresourceRange dstRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, physicalEye, 1 };
     VkImageMemoryBarrier barriers[ 2 ] = {};
     barriers[ 0 ] = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, source, srcRange };
     barriers[ 1 ] = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-        projectionSwapchainImageLayouts[ eyeIndex ], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        projectionSwapchainImageLayouts[ physicalEye ], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, dstRange };
     vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers );
 
@@ -1034,7 +1034,7 @@ void OpenXRPresenter::RecordStereoEyeBlit(VkCommandBuffer cmd, uint32_t eyeIndex
     VkImageBlit region{};
     region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
     region.srcOffsets[ 1 ] = { int32_t( sourceExtent.width ), int32_t( sourceExtent.height ), 1 };
-    region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, eyeIndex, 1 };
+    region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, physicalEye, 1 };
     region.dstOffsets[ 0 ] = { 0, 0, 0 };
     region.dstOffsets[ 1 ] = { int32_t( projectionExtent.width ), int32_t( projectionExtent.height ), 1 };
     vkCmdBlitImage( cmd, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR );
@@ -1043,7 +1043,7 @@ void OpenXRPresenter::RecordStereoEyeBlit(VkCommandBuffer cmd, uint32_t eyeIndex
     barriers[ 1 ].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; barriers[ 1 ].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     barriers[ 1 ].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; barriers[ 1 ].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers );
-    projectionSwapchainImageLayouts[ eyeIndex ] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    projectionSwapchainImageLayouts[ physicalEye ] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     if( eyeIndex == 1 )
     {
         projectionLayer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION }; projectionLayer.space = space; projectionLayer.viewCount = 2; projectionLayer.views = projectionViews;

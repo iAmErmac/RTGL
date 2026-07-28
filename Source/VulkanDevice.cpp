@@ -625,7 +625,56 @@ auto RTGL1::VulkanDevice::Render( VkCommandBuffer& cmd, const RgDrawFrameInfo& d
         eyeRenderStates[ 1 ].finalImage = RenderEye( cmd, drawInfo, 1 );
         const auto rightSize = framebuffers->GetFramebufSize( renderResolution.GetResolutionState(), eyeRenderStates[ 1 ].finalImage );
         openxr->RecordStereoEyeBlit( cmd, 1, framebuffers->GetImage( eyeRenderStates[ 1 ].finalImage, frameIndex ), rightSize );
-        return eyeRenderStates[ 1 ].finalImage;
+        const auto mirrorMode = openxr->GetActiveMirrorMode();
+        if( mirrorMode == RG_OPENXR_MIRROR_MODE_OFF_EXT )
+        {
+            const VkImage destination = framebuffers->GetImage( FB_IMAGE_INDEX_DESKTOP_MIRROR, frameIndex );
+            VkImageMemoryBarrier barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination,
+                { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
+            vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                  0, 0, nullptr, 0, nullptr, 1, &barrier );
+            const VkClearColorValue black{};
+            vkCmdClearColorImage( cmd, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1,
+                                  &barrier.subresourceRange );
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                  0, 0, nullptr, 0, nullptr, 1, &barrier );
+            return FB_IMAGE_INDEX_DESKTOP_MIRROR;
+        }
+
+        const uint32_t leftLogicalEye = openxr->GetLogicalEyeForPhysicalEye( 0 );
+        const uint32_t rightLogicalEye = openxr->GetLogicalEyeForPhysicalEye( 1 );
+        const auto mirrorImage = FB_IMAGE_INDEX_DESKTOP_MIRROR;
+        const auto mirrorExtent = framebuffers->GetFramebufSize( renderResolution.GetResolutionState(), mirrorImage );
+        const auto getEyeFinalImage = [&]( uint32_t eye ) {
+            framebuffers->SetActiveEye( eye );
+            return framebuffers->GetImage( eyeRenderStates[ eye ].finalImage, frameIndex );
+        };
+        const VkImage sources[] = {
+            getEyeFinalImage( leftLogicalEye ),
+            getEyeFinalImage( rightLogicalEye ),
+        };
+        framebuffers->SetActiveEye( 1 );
+        const VkImage destination = framebuffers->GetImage( mirrorImage, frameIndex );
+        VkImageMemoryBarrier barriers[ 3 ]{};
+        for( uint32_t i = 0; i < 2; ++i ) barriers[ i ] = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, sources[ i ], { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
+        barriers[ 2 ] = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
+        vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 3, barriers );
+        const VkClearColorValue black{};
+        vkCmdClearColorImage( cmd, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &barriers[ 2 ].subresourceRange );
+        const auto blit = [&]( uint32_t sourceEye, int32_t minX, int32_t maxX ) { VkImageBlit region{}; region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }; region.srcOffsets[ 1 ] = { int32_t( mirrorExtent.width ), int32_t( mirrorExtent.height ), 1 }; region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }; region.dstOffsets[ 0 ] = { minX, 0, 0 }; region.dstOffsets[ 1 ] = { maxX, int32_t( mirrorExtent.height ), 1 }; vkCmdBlitImage( cmd, sources[ sourceEye ], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR ); };
+        if( mirrorMode == RG_OPENXR_MIRROR_MODE_LEFT_EYE_EXT ) blit( 0, 0, int32_t( mirrorExtent.width ) );
+        else if( mirrorMode == RG_OPENXR_MIRROR_MODE_RIGHT_EYE_EXT ) blit( 1, 0, int32_t( mirrorExtent.width ) );
+        else { blit( 0, 0, int32_t( mirrorExtent.width / 2 ) ); blit( 1, int32_t( mirrorExtent.width / 2 ), int32_t( mirrorExtent.width ) ); }
+        for( uint32_t i = 0; i < 2; ++i ) { barriers[ i ].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; barriers[ i ].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; barriers[ i ].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; barriers[ i ].newLayout = VK_IMAGE_LAYOUT_GENERAL; }
+        barriers[ 2 ].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; barriers[ 2 ].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT; barriers[ 2 ].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; barriers[ 2 ].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        vkCmdPipelineBarrier( cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 3, barriers );
+        return mirrorImage;
     }
 #endif
     restirBuffers->SetActiveEye( 0 );

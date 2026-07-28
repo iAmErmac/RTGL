@@ -683,6 +683,7 @@ void Framebuf_CreateDX12Resources( CommandBufferManager&  vkcmds,
         { FB_IMAGE_INDEX_UPSCALED_PING, resolution.upscaledWidth, resolution.upscaledHeight },
         { FB_IMAGE_INDEX_UPSCALED_PONG, resolution.upscaledWidth, resolution.upscaledHeight },
         { FB_IMAGE_INDEX_HUD_ONLY, resolution.upscaledWidth, resolution.upscaledHeight },
+        { FB_IMAGE_INDEX_DESKTOP_MIRROR, resolution.upscaledWidth, resolution.upscaledHeight },
     };
 
     bool failed = false;

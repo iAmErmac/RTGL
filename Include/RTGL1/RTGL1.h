@@ -297,12 +297,12 @@ typedef struct RgOpenXRInputSnapshotEXT
     uint64_t virtualScreenRevision;
 } RgOpenXRInputSnapshotEXT;
 
-#define RG_OPENXR_PRESENTATION_EXT_VERSION 1u
+#define RG_OPENXR_PRESENTATION_EXT_VERSION 2u
 typedef enum RgOpenXRPresentationModeEXT { RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT = 0, RG_OPENXR_PRESENTATION_MODE_STEREO_PROJECTION_EXT = 1 } RgOpenXRPresentationModeEXT;
 typedef enum RgOpenXRMirrorModeEXT { RG_OPENXR_MIRROR_MODE_LEFT_EYE_EXT = 0, RG_OPENXR_MIRROR_MODE_RIGHT_EYE_EXT = 1, RG_OPENXR_MIRROR_MODE_SIDE_BY_SIDE_EXT = 2, RG_OPENXR_MIRROR_MODE_OFF_EXT = 3 } RgOpenXRMirrorModeEXT;
 typedef enum RgOpenXRPresentationCapabilityBitsEXT { RG_OPENXR_PRESENTATION_CAPABILITY_NONE_EXT = 0, RG_OPENXR_PRESENTATION_CAPABILITY_VIRTUAL_SCREEN_EXT = 1u << 0, RG_OPENXR_PRESENTATION_CAPABILITY_STEREO_PROJECTION_EXT = 1u << 1, RG_OPENXR_PRESENTATION_CAPABILITY_MIRROR_EXT = 1u << 2 } RgOpenXRPresentationCapabilityBitsEXT;
 typedef enum RgOpenXRPresentationFallbackReasonEXT { RG_OPENXR_PRESENTATION_FALLBACK_NONE_EXT = 0, RG_OPENXR_PRESENTATION_FALLBACK_NOT_READY_EXT = 1, RG_OPENXR_PRESENTATION_FALLBACK_UNSUPPORTED_EXT = 2, RG_OPENXR_PRESENTATION_FALLBACK_INVALID_REQUEST_EXT = 3 } RgOpenXRPresentationFallbackReasonEXT;
-typedef struct RgOpenXRPresentationSettingsEXT { uint32_t structSize; uint32_t version; RgOpenXRPresentationModeEXT presentationMode; RgOpenXRMirrorModeEXT mirrorMode; float eyeRenderScale; float fovAdjustment; float eyeShiftMultiplier; uint64_t requestSerial; } RgOpenXRPresentationSettingsEXT;
+typedef struct RgOpenXRPresentationSettingsEXT { uint32_t structSize; uint32_t version; RgOpenXRPresentationModeEXT presentationMode; RgOpenXRMirrorModeEXT mirrorMode; RgBool32 swapEyes; float eyeRenderScale; float fovAdjustment; float eyeShiftMultiplier; uint64_t requestSerial; } RgOpenXRPresentationSettingsEXT;
 typedef struct RgOpenXREyeFrameStateEXT { RgOpenXRPoseEXT pose; float fieldOfView[4]; float projection[16]; } RgOpenXREyeFrameStateEXT;
 typedef struct RgOpenXRFrameStateEXT { uint32_t structSize; uint32_t version; uint32_t capabilities; RgBool32 sessionRunning; RgBool32 focused; RgBool32 frameValid; int64_t predictedDisplayTime; RgOpenXRPoseEXT headPose; RgOpenXREyeFrameStateEXT eyes[2]; RgOpenXRPresentationModeEXT requestedPresentationMode; RgOpenXRPresentationModeEXT activePresentationMode; RgOpenXRMirrorModeEXT requestedMirrorMode; RgOpenXRMirrorModeEXT activeMirrorMode; RgOpenXRPresentationFallbackReasonEXT fallbackReason; } RgOpenXRFrameStateEXT;
 
