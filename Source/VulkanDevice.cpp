@@ -1522,6 +1522,14 @@ RgResult RTGL1::VulkanDevice::SetOpenXRVirtualScreenSettings( const RgOpenXRVirt
 #endif
     return RG_RESULT_SUCCESS;
 }
+RgResult RTGL1::VulkanDevice::SetOpenXRMenuPointerBeam( const RgOpenXRMenuPointerBeamEXT* pInfo )
+{
+    if( pInfo == nullptr || pInfo->sType != RG_STRUCTURE_TYPE_OPENXR_MENU_POINTER_BEAM_EXT ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
+#if defined(RG_WITH_OPENXR)
+    if( openxr ) return openxr->SetMenuPointerBeam( *pInfo );
+#endif
+    return RG_RESULT_SUCCESS;
+}
 RgResult RTGL1::VulkanDevice::GetOpenXRInputSnapshotEXT(RgOpenXRInputSnapshotEXT* pSnapshot) const
 {
     if (pSnapshot == nullptr) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;

@@ -292,6 +292,13 @@ RgResult OpenXRPresenter::SetVirtualScreenSettings(const RgOpenXRVirtualScreenSe
     activeVerticalPosition = verticalPosition;
     return RG_RESULT_SUCCESS;
 }
+RgResult OpenXRPresenter::SetMenuPointerBeam(const RgOpenXRMenuPointerBeamEXT& beam)
+{
+    if( beam.sType != RG_STRUCTURE_TYPE_OPENXR_MENU_POINTER_BEAM_EXT ) return RG_RESULT_WRONG_STRUCTURE_TYPE;
+    menuPointerBeam = beam;
+    menuPointerBeam.length = std::max(0.0f, beam.length);
+    return RG_RESULT_SUCCESS;
+}
 RgResult OpenXRPresenter::SetPresentationSettings(const RgOpenXRPresentationSettingsEXT& settings)
 {
     if( settings.structSize != sizeof(settings) || settings.version != RG_OPENXR_PRESENTATION_EXT_VERSION ) return RG_RESULT_WRONG_FUNCTION_ARGUMENT;
@@ -512,6 +519,12 @@ void OpenXRPresenter::SyncInputActions(RgOpenXRInputSnapshotEXT& snapshot)
     pose(leftHandSpace, snapshot.left.pose); pose(rightHandSpace, snapshot.right.pose);
     snapshot.virtualScreenPose.position.data[0] = quadLayer.pose.position.x; snapshot.virtualScreenPose.position.data[1] = quadLayer.pose.position.y; snapshot.virtualScreenPose.position.data[2] = quadLayer.pose.position.z;
     snapshot.virtualScreenPose.orientation.data[0] = quadLayer.pose.orientation.x; snapshot.virtualScreenPose.orientation.data[1] = quadLayer.pose.orientation.y; snapshot.virtualScreenPose.orientation.data[2] = quadLayer.pose.orientation.z; snapshot.virtualScreenPose.orientation.data[3] = quadLayer.pose.orientation.w; snapshot.virtualScreenPose.valid = RG_TRUE;
+    XrPosef headPose{};
+    if( LocateHeadPose(frameState.predictedDisplayTime, headPose) )
+    {
+        snapshot.headPose.position.data[0] = headPose.position.x; snapshot.headPose.position.data[1] = headPose.position.y; snapshot.headPose.position.data[2] = headPose.position.z;
+        snapshot.headPose.orientation.data[0] = headPose.orientation.x; snapshot.headPose.orientation.data[1] = headPose.orientation.y; snapshot.headPose.orientation.data[2] = headPose.orientation.z; snapshot.headPose.orientation.data[3] = headPose.orientation.w; snapshot.headPose.valid = RG_TRUE;
+    }
     snapshot.virtualScreenSize.data[0] = quadLayer.size.width; snapshot.virtualScreenSize.data[1] = quadLayer.size.height; snapshot.virtualScreenRevision = consumedRecenterRequest;
     snapshot.capabilities = RG_OPENXR_INPUT_CAPABILITY_INTERACTION_PROFILE | RG_OPENXR_INPUT_CAPABILITY_LEFT | RG_OPENXR_INPUT_CAPABILITY_RIGHT;
 }
@@ -815,6 +828,47 @@ void OpenXRPresenter::RecreateSwapchainForAspect(float aspect)
     quadLayer.subImage.imageRect = {{0, 0}, {static_cast<int32_t>(width), static_cast<int32_t>(height)}};
     quadLayer.size.height = quadLayer.size.width / aspect;
 }
+bool OpenXRPresenter::CreateMenuPointerBeamSwapchain()
+{
+    if( session == XR_NULL_HANDLE || swapchainFormat == VK_FORMAT_UNDEFINED ) return false;
+    if( menuPointerBeamSwapchain != XR_NULL_HANDLE ) return true;
+    XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    info.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+    info.format = swapchainFormat;
+    info.sampleCount = 1;
+    info.width = 8;
+    info.height = 8;
+    info.faceCount = 1;
+    info.arraySize = 1;
+    info.mipCount = 1;
+    if( createSwapchain(session, &info, &menuPointerBeamSwapchain) != XR_SUCCESS ) return false;
+    if( enumerateSwapchainImages(menuPointerBeamSwapchain, 0, &menuPointerBeamSwapchainImageCount, nullptr) != XR_SUCCESS || menuPointerBeamSwapchainImageCount == 0 )
+    {
+        DestroyMenuPointerBeamSwapchain();
+        return false;
+    }
+    menuPointerBeamSwapchainImages = new XrSwapchainImageVulkanKHR[menuPointerBeamSwapchainImageCount];
+    for( uint32_t i = 0; i < menuPointerBeamSwapchainImageCount; ++i ) menuPointerBeamSwapchainImages[i] = {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR};
+    if( enumerateSwapchainImages(menuPointerBeamSwapchain, menuPointerBeamSwapchainImageCount, &menuPointerBeamSwapchainImageCount,
+                                 reinterpret_cast<XrSwapchainImageBaseHeader*>(menuPointerBeamSwapchainImages)) != XR_SUCCESS )
+    {
+        DestroyMenuPointerBeamSwapchain();
+        return false;
+    }
+    return true;
+}
+
+void OpenXRPresenter::DestroyMenuPointerBeamSwapchain()
+{
+    if( menuPointerBeamSwapchain != XR_NULL_HANDLE ) destroySwapchain(menuPointerBeamSwapchain);
+    delete[] menuPointerBeamSwapchainImages;
+    menuPointerBeamSwapchain = XR_NULL_HANDLE;
+    menuPointerBeamSwapchainImages = nullptr;
+    menuPointerBeamSwapchainImageCount = 0;
+    menuPointerBeamSwapchainImageIndex = 0;
+    menuPointerBeamSwapchainImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+}
+
 void OpenXRPresenter::DestroyProjectionSwapchain()
 {
     if( projectionSwapchain != XR_NULL_HANDLE ) destroySwapchain( projectionSwapchain );
@@ -1006,6 +1060,42 @@ void OpenXRPresenter::RecordBlit(VkCommandBuffer cmd, VkImage source, VkExtent2D
     barriers[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
     swapchainImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    RecordMenuPointerBeam(cmd);
+}
+
+void OpenXRPresenter::RecordMenuPointerBeam(VkCommandBuffer cmd)
+{
+    if( !menuPointerBeam.visible || !frameActive || !shouldRender || !CreateMenuPointerBeamSwapchain() ) return;
+    XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    waitInfo.timeout = XR_INFINITE_DURATION;
+    if( acquireSwapchainImage(menuPointerBeamSwapchain, &acquireInfo, &menuPointerBeamSwapchainImageIndex) != XR_SUCCESS ||
+        waitSwapchainImage(menuPointerBeamSwapchain, &waitInfo) != XR_SUCCESS ) return;
+    menuPointerBeamImageAcquired = true;
+    const VkImage destination = menuPointerBeamSwapchainImages[menuPointerBeamSwapchainImageIndex].image;
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, nullptr, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+        menuPointerBeamSwapchainImageLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, destination, range};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    VkClearColorValue color{};
+    color.float32[0] = menuPointerBeam.color.data[0]; color.float32[1] = menuPointerBeam.color.data[1];
+    color.float32[2] = menuPointerBeam.color.data[2]; color.float32[3] = menuPointerBeam.color.data[3];
+    vkCmdClearColorImage(cmd, destination, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &range);
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    menuPointerBeamSwapchainImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    menuPointerBeamLayer = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    menuPointerBeamLayer.space = space;
+    menuPointerBeamLayer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    menuPointerBeamLayer.pose = {{menuPointerBeam.pose.orientation.data[0], menuPointerBeam.pose.orientation.data[1], menuPointerBeam.pose.orientation.data[2], menuPointerBeam.pose.orientation.data[3]},
+                                  {menuPointerBeam.pose.position.data[0], menuPointerBeam.pose.position.data[1], menuPointerBeam.pose.position.data[2]}};
+    menuPointerBeamLayer.size = {std::max(0.02f, menuPointerBeam.length), 0.005f};
+    menuPointerBeamLayer.subImage.swapchain = menuPointerBeamSwapchain;
+    menuPointerBeamLayer.subImage.imageRect = {{0, 0}, {8, 8}};
+    menuPointerBeamSubmitted = true;
 }
 
 void OpenXRPresenter::RecordHudBlit(VkCommandBuffer cmd, VkImage source, VkExtent2D sourceExtent)
@@ -1085,11 +1175,14 @@ void OpenXRPresenter::FinishFrame()
         Fail( RG_RESULT_OPENXR_PRESENTATION_ERROR, "OpenXR projection swapchain release failed" );
     if( quadImageAcquired && releaseSwapchainImage( swapchain, &releaseInfo ) != XR_SUCCESS )
         Fail( RG_RESULT_OPENXR_PRESENTATION_ERROR, "OpenXR quad swapchain release failed" );
-    const XrCompositionLayerBaseHeader* layers[ 2 ]{};
+    if( menuPointerBeamImageAcquired && releaseSwapchainImage( menuPointerBeamSwapchain, &releaseInfo ) != XR_SUCCESS )
+        Fail( RG_RESULT_OPENXR_PRESENTATION_ERROR, "OpenXR menu pointer beam swapchain release failed" );
+    const XrCompositionLayerBaseHeader* layers[ 3 ]{};
     uint32_t layerCount = 0;
     if( projectionSubmitted ) layers[ layerCount++ ] = reinterpret_cast< const XrCompositionLayerBaseHeader* >( &projectionLayer );
     if( hudSubmitted ) layers[ layerCount++ ] = reinterpret_cast< const XrCompositionLayerBaseHeader* >( &hudLayer );
     else if( quadSubmitted || ( !projectionSubmitted && quadImageAcquired ) ) layers[ layerCount++ ] = reinterpret_cast< const XrCompositionLayerBaseHeader* >( &quadLayer );
+    if( menuPointerBeamSubmitted ) layers[ layerCount++ ] = reinterpret_cast< const XrCompositionLayerBaseHeader* >( &menuPointerBeamLayer );
     XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
     endInfo.displayTime = frameState.predictedDisplayTime;
     endInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -1104,6 +1197,8 @@ void OpenXRPresenter::FinishFrame()
     hudSubmitted = false;
     activeSwapchain = XR_NULL_HANDLE;
     projectionSubmitted = false;
+    menuPointerBeamImageAcquired = false;
+    menuPointerBeamSubmitted = false;
     quadLayer.space = space;
     quadLayer.layerFlags = 0;
     frameActive = false;
@@ -1116,6 +1211,7 @@ void OpenXRPresenter::DestroySession()
         if (space != XR_NULL_HANDLE) destroySpace(space);
         if (swapchain != XR_NULL_HANDLE) destroySwapchain(swapchain);
         DestroyProjectionSwapchain();
+        DestroyMenuPointerBeamSwapchain();
         destroySession(session);
     }
     delete[] swapchainImages;

@@ -32,6 +32,7 @@ public:
 
     RgResult ApplyHapticFeedback(uint32_t hand, float durationSeconds, float amplitude);
     RgResult SetVirtualScreenSettings(const RgOpenXRVirtualScreenSettingsEXT& settings);
+    RgResult SetMenuPointerBeam(const RgOpenXRMenuPointerBeamEXT& beam);
     RgResult GetInputSnapshot(RgOpenXRInputSnapshotEXT& snapshot) const;
     RgResult SetPresentationSettings(const RgOpenXRPresentationSettingsEXT& settings);
     RgResult GetFrameState(RgOpenXRFrameStateEXT& state) const;
@@ -62,6 +63,9 @@ private:
     void RecreateSwapchainForAspect(float aspect);
     void RecreateProjectionSwapchain();
     void DestroyProjectionSwapchain();
+    bool CreateMenuPointerBeamSwapchain();
+    void DestroyMenuPointerBeamSwapchain();
+    void RecordMenuPointerBeam(VkCommandBuffer cmd);
     void DestroySession();
     [[noreturn]] void Fail(RgResult result, const char* reason) const;
 
@@ -126,6 +130,7 @@ private:
     // Stereo projection has a distinct two-layer swapchain. The quad
     // swapchain above remains exclusive to the cinema presentation.
     XrSwapchain projectionSwapchain = XR_NULL_HANDLE;
+    XrSwapchain menuPointerBeamSwapchain = XR_NULL_HANDLE;
     XrActionSet actionSet = XR_NULL_HANDLE;
     XrAction leftStick = XR_NULL_HANDLE, rightStick = XR_NULL_HANDLE;
     XrAction leftPoseAction = XR_NULL_HANDLE, rightPoseAction = XR_NULL_HANDLE;
@@ -146,13 +151,17 @@ private:
     XrCompositionLayerProjectionView projectionViews[2]{{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
     XrSwapchainImageVulkanKHR* swapchainImages = nullptr;
     XrSwapchainImageVulkanKHR* projectionSwapchainImages = nullptr;
+    XrSwapchainImageVulkanKHR* menuPointerBeamSwapchainImages = nullptr;
     uint32_t swapchainImageCount = 0;
     uint32_t projectionSwapchainImageCount = 0;
+    uint32_t menuPointerBeamSwapchainImageCount = 0;
     uint32_t swapchainImageIndex = 0;
     uint32_t projectionSwapchainImageIndex = 0;
+    uint32_t menuPointerBeamSwapchainImageIndex = 0;
     XrSwapchain activeSwapchain = XR_NULL_HANDLE;
     VkImageLayout swapchainImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VkImageLayout projectionSwapchainImageLayouts[ 2 ] = { VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_UNDEFINED };
+    VkImageLayout menuPointerBeamSwapchainImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D swapchainExtent{};
     VkExtent2D projectionRecommendedExtent{};
@@ -169,6 +178,8 @@ private:
     bool quadSubmitted = false;
     bool hudSubmitted = false;
     bool projectionSubmitted = false;
+    bool menuPointerBeamImageAcquired = false;
+    bool menuPointerBeamSubmitted = false;
     RgOpenXRPresentationSettingsEXT requestedPresentationSettings{sizeof(RgOpenXRPresentationSettingsEXT), RG_OPENXR_PRESENTATION_EXT_VERSION, RG_OPENXR_PRESENTATION_MODE_VIRTUAL_SCREEN_EXT, RG_OPENXR_MIRROR_MODE_LEFT_EYE_EXT, RG_FALSE, 1.0f, 0.0f, 1.0f, 0};
     uint64_t acceptedPresentationSerial = 0;
     RgOpenXRFrameStateEXT xrFrameState{sizeof(RgOpenXRFrameStateEXT), RG_OPENXR_PRESENTATION_EXT_VERSION};
@@ -177,6 +188,8 @@ private:
     RgOpenXRVirtualScreenSettingsEXT virtualScreenSettings{
         RG_STRUCTURE_TYPE_OPENXR_VIRTUAL_SCREEN_SETTINGS_EXT, nullptr, 2, RG_FALSE, 1.0f, 0.0f, 0.0f, 0, 0, 0
     };
+    RgOpenXRMenuPointerBeamEXT menuPointerBeam{RG_STRUCTURE_TYPE_OPENXR_MENU_POINTER_BEAM_EXT, nullptr, RG_FALSE};
+    XrCompositionLayerQuad menuPointerBeamLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrPosef stationaryAnchor{{0, 0, 0, 1}, {0, 0, 0}};
     XrPosef targetAnchor{{0, 0, 0, 1}, {0, 0, 0}};
     XrPosef currentAnchor{{0, 0, 0, 1}, {0, 0, 0}};

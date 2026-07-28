@@ -195,6 +195,7 @@ typedef enum RgStructureType
     RG_STRUCTURE_TYPE_OPENXR_PRESENTATION_CREATE_INFO_EXT   = 36,
     RG_STRUCTURE_TYPE_OPENXR_VIRTUAL_SCREEN_SETTINGS_EXT    = 37,
     RG_STRUCTURE_TYPE_OPENXR_PRESENTATION_SETTINGS_EXT      = 38,
+    RG_STRUCTURE_TYPE_OPENXR_MENU_POINTER_BEAM_EXT          = 39,
 } RgStructureType;
 
 typedef enum RgTextureSwizzling
@@ -266,6 +267,16 @@ typedef struct RgOpenXRPoseEXT
     RgBool32 valid;
 } RgOpenXRPoseEXT;
 
+typedef struct RgOpenXRMenuPointerBeamEXT
+{
+    RgStructureType sType;
+    void*           pNext;
+    RgBool32        visible;
+    RgOpenXRPoseEXT pose;
+    float           length;
+    RgFloat4D       color;
+} RgOpenXRMenuPointerBeamEXT;
+
 typedef struct RgOpenXRControllerStateEXT
 {
     RgFloat2D stick;
@@ -293,6 +304,7 @@ typedef struct RgOpenXRInputSnapshotEXT
     RgOpenXRControllerStateEXT left;
     RgOpenXRControllerStateEXT right;
     RgOpenXRPoseEXT virtualScreenPose;
+    RgOpenXRPoseEXT headPose;
     RgFloat2D virtualScreenSize;
     uint64_t virtualScreenRevision;
 } RgOpenXRInputSnapshotEXT;
@@ -309,6 +321,7 @@ typedef struct RgOpenXRFrameStateEXT { uint32_t structSize; uint32_t version; ui
 typedef RgResult ( RGAPI_PTR* PFN_rgGetOpenXRInputSnapshotEXT )( RgOpenXRInputSnapshotEXT* pSnapshot );
 typedef RgResult ( RGAPI_PTR* PFN_rgApplyOpenXRHapticFeedbackEXT )( uint32_t hand, float durationSeconds, float amplitude );
 RGAPI RgResult RGAPI_CALL rgApplyOpenXRHapticFeedbackEXT( uint32_t hand, float durationSeconds, float amplitude );
+RGAPI RgResult RGAPI_CALL rgSetOpenXRMenuPointerBeamEXT( const RgOpenXRMenuPointerBeamEXT* pInfo );
 
 RGAPI RgResult RGAPI_CALL rgGetOpenXRInputSnapshotEXT( RgOpenXRInputSnapshotEXT* pSnapshot );
 
@@ -663,6 +676,7 @@ typedef struct RgSpawnFluidInfo
 } RgSpawnFluidInfo;
 typedef RgResult( RGAPI_PTR* PFN_rgSpawnFluid )( const RgSpawnFluidInfo* pInfo );
 typedef RgResult( RGAPI_PTR* PFN_rgSetOpenXRVirtualScreenSettingsEXT )( const RgOpenXRVirtualScreenSettingsEXT* pInfo );
+typedef RgResult( RGAPI_PTR* PFN_rgSetOpenXRMenuPointerBeamEXT )( const RgOpenXRMenuPointerBeamEXT* pInfo );
 typedef RgResult( RGAPI_PTR* PFN_rgSetOpenXRPresentationSettingsEXT )( const RgOpenXRPresentationSettingsEXT* pInfo );
 typedef RgResult( RGAPI_PTR* PFN_rgGetOpenXRFrameStateEXT )( RgOpenXRFrameStateEXT* pState );
 
@@ -1382,6 +1396,7 @@ typedef struct RgInterface
     // Additional
     PFN_rgSpawnFluid                      rgSpawnFluid;
     PFN_rgSetOpenXRVirtualScreenSettingsEXT rgSetOpenXRVirtualScreenSettingsEXT;
+    PFN_rgSetOpenXRMenuPointerBeamEXT      rgSetOpenXRMenuPointerBeamEXT;
     PFN_rgSetOpenXRPresentationSettingsEXT rgSetOpenXRPresentationSettingsEXT;
     PFN_rgGetOpenXRFrameStateEXT rgGetOpenXRFrameStateEXT;
     PFN_rgApplyOpenXRHapticFeedbackEXT rgApplyOpenXRHapticFeedbackEXT;

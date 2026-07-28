@@ -314,6 +314,10 @@ RGAPI RgResult RGAPI_CALL rgApplyOpenXRHapticFeedbackEXT( uint32_t hand, float d
 {
     return Call( [ & ]( Device& d ) { return d.ApplyOpenXRHapticFeedbackEXT( hand, durationSeconds, amplitude ); } );
 }
+RGAPI RgResult RGAPI_CALL rgSetOpenXRMenuPointerBeamEXT( const RgOpenXRMenuPointerBeamEXT* pInfo )
+{
+    return Call( [ & ]( Device& d ) { return d.SetOpenXRMenuPointerBeam( pInfo ); } );
+}
 RGAPI RgResult RGCONV RGAPI_CALL rgCreateInstance( const RgInstanceCreateInfo* pInfo,
                                                    RgInterface*                pInterface )
 {
@@ -380,6 +384,7 @@ RGAPI RgResult RGCONV RGAPI_CALL rgCreateInstance( const RgInstanceCreateInfo* p
             .rgUtilGetSupportedFeatures        = rgUtilGetSupportedFeatures,
             .rgSpawnFluid                      = rgSpawnFluid,
             .rgSetOpenXRVirtualScreenSettingsEXT = rgSetOpenXRVirtualScreenSettingsEXT,
+            .rgSetOpenXRMenuPointerBeamEXT = rgSetOpenXRMenuPointerBeamEXT,
             .rgSetOpenXRPresentationSettingsEXT = rgSetOpenXRPresentationSettingsEXT,
             .rgGetOpenXRFrameStateEXT = rgGetOpenXRFrameStateEXT,
             .rgApplyOpenXRHapticFeedbackEXT = rgApplyOpenXRHapticFeedbackEXT,
