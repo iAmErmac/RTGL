@@ -1303,6 +1303,9 @@ typedef struct RgDrawFrameInfo
     RgBool32                    resetHistory;
 
     double                      currentTime;
+
+    // Optional inward correction for the classic-mode split in stereo.
+    float                       stereoClassicSplitOffset;
 } RgDrawFrameInfo;
 
 typedef RgResult( RGAPI_PTR* PFN_rgDrawFrame)(const RgDrawFrameInfo* pInfo );

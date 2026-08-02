@@ -300,6 +300,7 @@ void RTGL1::VulkanDevice::FillUniform( RTGL1::ShGlobalUniform* gu,
         gu->upscaledRenderWidth  = static_cast< float >( renderResolution.UpscaledWidth() );
         gu->upscaledRenderHeight = static_cast< float >( renderResolution.UpscaledHeight() );
 
+        const RgFloat2D previousJitter = { gu->jitterX, gu->jitterY };
         RgFloat2D jitter = { 0, 0 };
         if( renderResolution.IsNvDlssEnabled() )
         {
@@ -321,6 +322,8 @@ void RTGL1::VulkanDevice::FillUniform( RTGL1::ShGlobalUniform* gu,
             }
         }
 
+        gu->jitterXPrev = previousJitter.data[ 0 ];
+        gu->jitterYPrev = previousJitter.data[ 1 ];
         gu->jitterX = jitter.data[ 0 ];
         gu->jitterY = jitter.data[ 1 ];
     }
@@ -705,6 +708,19 @@ auto RTGL1::VulkanDevice::RenderEye( VkCommandBuffer& cmd, const RgDrawFrameInfo
 #else
     const auto& renderUniform = this->uniform;
 #endif
+    // The classic split is screen-space, while the two VR eyes have different viewpoints.
+    // Move the split inward in each eye so both boundaries meet at the selected convergence depth.
+    const bool partialClassicSplit = lightmapScreenCoverage > 0.0f && lightmapScreenCoverage < 1.0f;
+    const float eyeClassicSplit = stereoRender && partialClassicSplit
+        ? std::clamp( lightmapScreenCoverage + ( eyeIndex == 0 ? drawInfo.stereoClassicSplitOffset
+                                                               : -drawInfo.stereoClassicSplitOffset ),
+                      0.0f, 1.0f )
+        : lightmapScreenCoverage;
+    if( stereoRender )
+    {
+        renderUniform->GetData()->lightmapScreenCoverage = eyeClassicSplit;
+    }
+
     const double timeDelta = std::max< double >( currentFrameTime - previousFrameTime, 0.0001 );
 #if defined(RG_WITH_OPENXR)
     const auto cameraInfo = pendingStereoCameraValid
@@ -900,7 +916,7 @@ auto RTGL1::VulkanDevice::RenderEye( VkCommandBuffer& cmd, const RgDrawFrameInfo
                                       cameraInfo.projection,
                                       jitter,
                                       renderResolution,
-                                      lightmapScreenCoverage );
+                                      eyeClassicSplit );
     }
 
     imageComposition->Finalize( cmd,
@@ -1075,7 +1091,7 @@ auto RTGL1::VulkanDevice::RenderEye( VkCommandBuffer& cmd, const RgDrawFrameInfo
             }
         }
 
-        if( lightmapScreenCoverage > 0 && !drawInfo.disableRasterization )
+        if( eyeClassicSplit > 0 && !drawInfo.disableRasterization )
         {
             rasterizer->DrawClassic(
                 cmd,
@@ -1088,8 +1104,8 @@ auto RTGL1::VulkanDevice::RenderEye( VkCommandBuffer& cmd, const RgDrawFrameInfo
                 cameraInfo.view,
                 cameraInfo.projection,
                 renderResolution,
-                lightmapScreenCoverage,
-                pnext::get< RgDrawFrameSkyParams >( drawInfo ).skyViewerPosition );
+                eyeClassicSplit,
+                MakeCameraPosition( cameraInfo ) );
         }
 
         accum = framebuffers->BlitForEffects( cmd,

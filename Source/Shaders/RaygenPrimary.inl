@@ -77,8 +77,13 @@ vec2 getMotionForInfinitePoint(const ivec2 pix)
     vec3 ndcCur            = clipSpacePosCur.xyz;
     vec3 ndcPrev           = clipSpacePosPrev.xyz;
 
-    vec2 screenSpaceCur    = ndcCur.xy  * 0.5 + 0.5;
-    vec2 screenSpacePrev   = ndcPrev.xy * 0.5 + 0.5;
+    const vec2 renderSize = vec2( globalUniform.renderWidth, globalUniform.renderHeight );
+    const vec2 jitterCur = vec2( globalUniform.jitterX, globalUniform.jitterY ) / renderSize;
+    const vec2 jitterPrev = vec2( globalUniform.jitterXPrev, globalUniform.jitterYPrev ) / renderSize;
+    // Convert from jittered projection coordinates back to each frame's pixel grid.
+    // This preserves the sub-pixel delta needed to reproject an infinite sky.
+    vec2 screenSpaceCur    = ndcCur.xy  * 0.5 + 0.5 - jitterCur;
+    vec2 screenSpacePrev   = ndcPrev.xy * 0.5 + 0.5 - jitterPrev;
 
     return screenSpacePrev - screenSpaceCur;
 }
@@ -127,7 +132,7 @@ void storeSky( const ivec2 pix,
     imageStore(framebufDepthNdc,            getRegularPixFromCheckerboardPix(pix), vec4(clamp(firstHitDepthNDC, 0.0, 1.0)));
     imageStore(framebufMotionDlss,          getRegularPixFromCheckerboardPix(pix), vec4(getMotionVectorForUpscaler(m), 0.0, 0.0));
     imageStore(framebufThroughput,          pix, vec4(throughput, 0.0));
-    imageStore(framebufReactivity,          getRegularPixFromCheckerboardPix(pix), vec4(0.0));
+    imageStore(framebufReactivity,          getRegularPixFromCheckerboardPix(pix), vec4(0.0)); // Correct sky motion permits normal temporal anti-aliasing.
 #else
     imageStore(framebufThroughput,          pix, vec4(throughput, wasSplit ? 1.0 : -1.0));
     imageStore(framebufReactivity,          getRegularPixFromCheckerboardPix(pix), vec4(UPSCALER_REACTIVITY_REFLREFR));
@@ -357,7 +362,7 @@ void main()
     {
         storeSky( pix,
                   cameraRayDir,
-                  globalUniform.skyType != SKY_TYPE_RASTERIZED_GEOMETRY,
+                  true, // Raster skies are sampled from the direction-only cubemap.
                   vec3( 1.0 ),
                   1.0 );
         return;
@@ -384,7 +389,7 @@ void main()
         // if sky is a rasterized geometry, it was already rendered to albedo framebuf 
         storeSky( pix,
                   cameraRayDir,
-                  globalUniform.skyType != SKY_TYPE_RASTERIZED_GEOMETRY,
+                  true, // Raster skies are sampled from the direction-only cubemap.
                   throughput,
                   1.0 );
         return;

@@ -306,11 +306,12 @@ void RTGL1::Rasterizer::DrawDecals( VkCommandBuffer               cmd,
 
     decalManager->CopyRtGBufferToAttachments( cmd, frameIndex, uniform, *storageFramebuffers );
 
-    auto jitterredProj =
-        ApplyJitter( proj, jitter, renderResolution.Width(), renderResolution.Height() );
+    // The sky is an infinitely distant background. Do not apply temporal
+    // camera jitter here; it makes the sky texture visibly hop between frames.
+    const float* jitterredProj = proj;
 
     float defaultViewProj[ 16 ];
-    Matrix::Multiply( defaultViewProj, view, jitterredProj.data() );
+    Matrix::Multiply( defaultViewProj, view, jitterredProj );
 
     VkDescriptorSet sets[] = {
         uniform.GetDescSet( frameIndex ),
@@ -356,11 +357,12 @@ void RTGL1::Rasterizer::DrawSkyToAlbedo( VkCommandBuffer               cmd,
     float skyView[ 16 ];
     Matrix::SetNewViewerPosition( skyView, view, skyViewerPos.data );
 
-    auto jitterredProj =
-        ApplyJitter( proj, jitter, renderResolution.Width(), renderResolution.Height() );
+    // The sky is an infinitely distant background. Do not apply temporal
+    // camera jitter here; it makes the sky texture visibly hop between frames.
+    const float* jitterredProj = proj;
 
     float defaultSkyViewProj[ 16 ];
-    Matrix::Multiply( defaultSkyViewProj, skyView, jitterredProj.data() );
+    Matrix::Multiply( defaultSkyViewProj, skyView, jitterredProj );
 
 
     VkDescriptorSet sets[] = {
@@ -418,11 +420,12 @@ void RTGL1::Rasterizer::DrawToFinalImage( VkCommandBuffer               cmd,
                                  renderResolution.Height() );
 
 
-    auto jitterredProj =
-        ApplyJitter( proj, jitter, renderResolution.Width(), renderResolution.Height() );
+    // The sky is an infinitely distant background. Do not apply temporal
+    // camera jitter here; it makes the sky texture visibly hop between frames.
+    const float* jitterredProj = proj;
 
     float defaultViewProj[ 16 ];
-    Matrix::Multiply( defaultViewProj, view, jitterredProj.data() );
+    Matrix::Multiply( defaultViewProj, view, jitterredProj );
 
     VkDescriptorSet sets[] = {
         textureManager.GetDescSet( frameIndex ),

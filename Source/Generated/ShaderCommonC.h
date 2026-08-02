@@ -276,6 +276,8 @@ struct ShGlobalUniform
     float upscaledRenderHeight;
     float jitterX;
     float jitterY;
+    float jitterXPrev;
+    float jitterYPrev;
     float primaryRayMinDist;
     uint32_t rayCullMaskWorld_Shadow;
     uint32_t volumeAllowTintUnderwater;

@@ -105,6 +105,7 @@ void main()
     const vec3 unfilteredSpec   = texelFetchUnfilteredSpecular( pix );
     // xyz - direction, w - hit distance
     const vec4 unfilteredRayInfo= texelFetch(framebufViewDirection_Sampler, pix, 0);
+    const bool skyPixel = isSkyPix( pix );
 
     const ivec3 chRenderArea    = getCheckerboardedRenderArea(              pix);
     const vec3 motion           = texelFetch(framebufMotion_Sampler,        pix, 0).xyz;
@@ -113,7 +114,10 @@ void main()
     // Long history is stable when the surface barely moves, but stale samples
     // make high-frequency dark detail trail during head motion. Limit only the
     // affected pixel's history; stationary pixels retain the normal limit.
-    const float motionHistoryLimit = mix(256.0, 4.0, smoothstep(0.75, 6.0, motionPixels));
+    // Sky is an infinitely distant raster/cubemap background. Reprojecting it through
+    // SVGF history makes small pose/timing differences look like the sky swims.
+    // Use the current sky sample directly while retaining normal history for geometry.
+    const float motionHistoryLimit = skyPixel ? 1.0 : mix(256.0, 4.0, smoothstep(0.75, 6.0, motionPixels));
     const float depth           = texelFetch(framebufDepthWorld_Sampler,    pix, 0).r;
     const vec3 normal           = texelFetchNormal(                         pix);
     const float roughness       = texelFetch(framebufMetallicRoughness_Sampler, pix, 0).g;
